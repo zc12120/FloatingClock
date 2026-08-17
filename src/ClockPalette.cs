@@ -211,19 +211,7 @@ namespace FloatingClock
                 return CreateOpaqueSurface();
             }
 
-            byte alpha = OpacityPresets.SurfaceAlpha(opacity);
-            byte sheen = (byte)Math.Min(255, alpha + 28);
-            byte deep = (byte)Math.Max(72, alpha - 22);
-            LinearGradientBrush brush = new LinearGradientBrush
-            {
-                StartPoint = new Point(0.5, 0),
-                EndPoint = new Point(0.5, 1)
-            };
-            brush.GradientStops.Add(new GradientStop(WithAlpha(SurfaceSheen, sheen), 0.0));
-            brush.GradientStops.Add(new GradientStop(WithAlpha(SurfaceTint, alpha), 0.42));
-            brush.GradientStops.Add(new GradientStop(WithAlpha(SurfaceDeep, deep), 1.0));
-            brush.Freeze();
-            return brush;
+            return Solid(WithAlpha(SurfaceTint, OpacityPresets.SurfaceAlpha(opacity)));
         }
 
         public Brush CreateBorder(double opacity)

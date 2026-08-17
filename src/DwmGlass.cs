@@ -6,17 +6,16 @@ namespace FloatingClock
     internal static class DwmGlass
     {
         private const int AccentPolicyAttribute = 19;
-        private const int AccentTransparentGradient = 2;
         private const int AccentFlagsFill = 2;
         private const int CornerPreference = 33;
-        private const int CornerRoundSmall = 3;
         private const int SystemBackdropType = 38;
         private const int BackdropNone = 1;
         private const int BorderColor = 34;
         private const int CaptionColor = 35;
+        private const int TextColor = 36;
         private const uint ColorNone = 0xFFFFFFFE;
 
-        public static void Disable(IntPtr handle)
+        public static void NeutralizeHover(IntPtr handle)
         {
             if (handle == IntPtr.Zero)
             {
@@ -30,38 +29,22 @@ namespace FloatingClock
             uint noColor = ColorNone;
             DwmSetWindowAttributeUInt(handle, BorderColor, ref noColor, 4);
             DwmSetWindowAttributeUInt(handle, CaptionColor, ref noColor, 4);
-            Apply(handle, 0, 0, false);
+            DwmSetWindowAttributeUInt(handle, TextColor, ref noColor, 4);
+            ApplyAccent(handle, 0, 0);
+        }
+
+        public static void Disable(IntPtr handle)
+        {
+            NeutralizeHover(handle);
         }
 
         public static void Enable(IntPtr handle, uint accentColor)
         {
-            Apply(handle, AccentTransparentGradient, accentColor, true);
+            NeutralizeHover(handle);
         }
 
-        private static void Apply(IntPtr handle, int accentState, uint accentColor, bool extendFrame)
+        private static void ApplyAccent(IntPtr handle, int accentState, uint accentColor)
         {
-            if (handle == IntPtr.Zero)
-            {
-                return;
-            }
-
-            Margins margins = new Margins
-            {
-                Left = extendFrame ? -1 : 0,
-                Right = extendFrame ? -1 : 0,
-                Top = extendFrame ? -1 : 0,
-                Bottom = extendFrame ? -1 : 0
-            };
-            DwmExtendFrameIntoClientArea(handle, ref margins);
-
-            int corner = CornerRoundSmall;
-            DwmSetWindowAttribute(handle, CornerPreference, ref corner, 4);
-            int backdrop = BackdropNone;
-            DwmSetWindowAttribute(handle, SystemBackdropType, ref backdrop, 4);
-            uint noColor = ColorNone;
-            DwmSetWindowAttributeUInt(handle, BorderColor, ref noColor, 4);
-            DwmSetWindowAttributeUInt(handle, CaptionColor, ref noColor, 4);
-
             AccentPolicy policy = new AccentPolicy
             {
                 AccentState = accentState,
@@ -106,22 +89,10 @@ namespace FloatingClock
             public int SizeOfData;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct Margins
-        {
-            public int Left;
-            public int Right;
-            public int Top;
-            public int Bottom;
-        }
-
         [DllImport("user32.dll")]
         private static extern int SetWindowCompositionAttribute(
             IntPtr handle,
             ref WindowCompositionAttributeData data);
-
-        [DllImport("dwmapi.dll")]
-        private static extern int DwmExtendFrameIntoClientArea(IntPtr handle, ref Margins margins);
 
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(

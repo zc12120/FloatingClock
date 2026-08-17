@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -61,10 +62,16 @@ namespace FloatingClock
         private MenuItem startupItem;
 
         private ClockPalette palette;
+        private LayeredSurface layeredSurface;
+        private LayeredSurface hitSurface;
         private bool allowClose;
-        private bool dragging;
-        private Point dragOffset;
         private bool hotKeyRegistered;
+        private bool presentQueued;
+        private double surfaceLeft;
+        private double surfaceTop;
+        private double lastLayoutWidth;
+        private double lastLayoutHeight;
+        private string lastPresentedFace;
         private IntPtr windowHandle;
         private HwndSource windowSource;
         private int lastDateStamp;
@@ -88,14 +95,14 @@ namespace FloatingClock
 
             Title = "FLOAT CLOCK";
             WindowStyle = WindowStyle.None;
-            AllowsTransparency = true;
-            Background = Brushes.Transparent;
+            AllowsTransparency = false;
+            Background = Brushes.Black;
             ResizeMode = ResizeMode.NoResize;
             ShowInTaskbar = false;
             ShowActivated = false;
             Focusable = false;
             FocusVisualStyle = null;
-            Topmost = settings.AlwaysOnTop;
+            Topmost = false;
             WindowStartupLocation = WindowStartupLocation.Manual;
             UseLayoutRounding = true;
             SnapsToDevicePixels = true;
@@ -219,11 +226,8 @@ namespace FloatingClock
                 ApplyMenuPalette();
                 RefreshMenuChecks();
             };
-            ContextMenu = clockMenu;
-
-            MouseLeftButtonDown += HandleLeftButtonDown;
-            MouseMove += HandleMouseMove;
-            MouseLeftButtonUp += HandleLeftButtonUp;
+            SizeChanged += HandleHostSizeChanged;
+            IsVisibleChanged += HandleVisibleChanged;
             SourceInitialized += HandleSourceInitialized;
 
             clockTimer = new DispatcherTimer(DispatcherPriority.Background);
@@ -237,8 +241,8 @@ namespace FloatingClock
 
             if (settings.DockAnchor == 0 && settings.HasPosition)
             {
-                Left = settings.Left;
-                Top = settings.Top;
+                surfaceLeft = settings.Left;
+                surfaceTop = settings.Top;
             }
             else
             {
@@ -343,12 +347,12 @@ namespace FloatingClock
                 return;
             }
 
-            double centerX = Left + (Width / 2.0);
-            double centerY = Top + (Height / 2.0);
+            double centerX = surfaceLeft + (Width / 2.0);
+            double centerY = surfaceTop + (Height / 2.0);
             settings.ScaleMode = scaleMode;
             ApplyLayout(true);
-            Left = centerX - (Width / 2.0);
-            Top = centerY - (Height / 2.0);
+            surfaceLeft = centerX - (Width / 2.0);
+            surfaceTop = centerY - (Height / 2.0);
             ClampToVisibleArea();
             SaveAndRefresh();
         }
@@ -369,7 +373,9 @@ namespace FloatingClock
         public void ToggleAlwaysOnTop()
         {
             settings.AlwaysOnTop = !settings.AlwaysOnTop;
-            Topmost = settings.AlwaysOnTop;
+            Topmost = false;
+            SetSurfacesTopmost(settings.AlwaysOnTop);
+
             SaveAndRefresh();
         }
 
@@ -391,6 +397,8 @@ namespace FloatingClock
             {
                 ApplyDock(true);
             }
+
+            RequestPresent();
         }
 
         public void ResetPosition()
@@ -420,10 +428,16 @@ namespace FloatingClock
 
         public void BringClockForward()
         {
-            if (settings.AlwaysOnTop)
+            if (settings.AlwaysOnTop && layeredSurface != null)
             {
-                Topmost = true;
-                NativeMethods.KeepTopmost(windowHandle);
+                if (hitSurface != null)
+                {
+                    hitSurface.SetTopmost(true);
+                    hitSurface.BringForward();
+                }
+
+                layeredSurface.SetTopmost(true);
+                layeredSurface.BringForward();
             }
         }
 
@@ -436,19 +450,20 @@ namespace FloatingClock
                 SystemParameters.VirtualScreenHeight);
             const double visibleEdge = 20.0;
 
-            if (double.IsNaN(Left) || double.IsNaN(Top))
+            if (double.IsNaN(surfaceLeft) || double.IsNaN(surfaceTop))
             {
                 ApplyDock(true);
                 return;
             }
 
-            Left = Math.Max(
+            surfaceLeft = Math.Max(
                 virtualArea.Left - Width + visibleEdge,
-                Math.Min(Left, virtualArea.Right - visibleEdge));
-            Top = Math.Max(
+                Math.Min(surfaceLeft, virtualArea.Right - visibleEdge));
+            surfaceTop = Math.Max(
                 virtualArea.Top - Height + visibleEdge,
-                Math.Min(Top, virtualArea.Bottom - visibleEdge));
+                Math.Min(surfaceTop, virtualArea.Bottom - visibleEdge));
             RememberPosition();
+            SyncSurfacePosition();
         }
 
         protected override void OnClosing(CancelEventArgs e)
@@ -475,6 +490,18 @@ namespace FloatingClock
             {
                 windowSource.RemoveHook(HandleWindowMessage);
                 windowSource = null;
+            }
+
+            if (layeredSurface != null)
+            {
+                layeredSurface.Dispose();
+                layeredSurface = null;
+            }
+
+            if (hitSurface != null)
+            {
+                hitSurface.Dispose();
+                hitSurface = null;
             }
 
             base.OnClosed(e);
@@ -617,49 +644,6 @@ namespace FloatingClock
             return text;
         }
 
-        private void HandleLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            if (e.ChangedButton != MouseButton.Left || settings.Locked)
-            {
-                return;
-            }
-
-            dragging = true;
-            dragOffset = e.GetPosition(this);
-            CaptureMouse();
-            e.Handled = true;
-        }
-
-        private void HandleMouseMove(object sender, MouseEventArgs e)
-        {
-            if (!dragging || e.LeftButton != MouseButtonState.Pressed)
-            {
-                return;
-            }
-
-            Point screen = PointToScreen(e.GetPosition(this));
-            Point dip = DeviceToDip(screen.X, screen.Y);
-            Left = dip.X - dragOffset.X;
-            Top = dip.Y - dragOffset.Y;
-        }
-
-        private void HandleLeftButtonUp(object sender, MouseButtonEventArgs e)
-        {
-            if (!dragging)
-            {
-                return;
-            }
-
-            dragging = false;
-            if (IsMouseCaptured)
-            {
-                ReleaseMouseCapture();
-            }
-
-            RememberPosition();
-            persistSettings();
-        }
-
         private void HandleSourceInitialized(object sender, EventArgs e)
         {
             windowHandle = new WindowInteropHelper(this).Handle;
@@ -681,6 +665,8 @@ namespace FloatingClock
             }
 
             NativeMethods.DisableTransitions(windowHandle);
+            NativeMethods.Cloak(windowHandle, true);
+            ParkHostWindow();
             ApplyExtendedStyles();
             ApplyDesktopGlass();
             if (settings.DockAnchor == 0)
@@ -691,6 +677,9 @@ namespace FloatingClock
             {
                 ApplyDock(true);
             }
+
+            EnsureLayeredSurface();
+            RequestPresent();
         }
 
         private IntPtr HandleWindowMessage(
@@ -742,6 +731,11 @@ namespace FloatingClock
         private void HandleClockTick(object sender, EventArgs e)
         {
             UpdateClock(DateTime.Now, false);
+            if (ClockFaceChanged())
+            {
+                RequestPresent();
+            }
+
             ScheduleNextTick();
         }
 
@@ -758,7 +752,7 @@ namespace FloatingClock
             secondsRun.Text = ClockFormatter.SecondsSuffix(now, settings.ShowSeconds);
             string period = ClockFormatter.Period(now, settings.Use24Hour);
             periodRun.Text = period.Length == 0 ? string.Empty : " " + period;
-            colonRun.Foreground = now.Second % 2 == 0 ? palette.TimeInk : palette.TimeSecondary;
+            colonRun.Foreground = palette.TimeInk;
 
             int dateStamp = (now.Year * 10000) + (now.Month * 100) + now.Day;
             if (forceDate || dateStamp != lastDateStamp)
@@ -786,13 +780,13 @@ namespace FloatingClock
 
         private void RelayoutPreservingCenter()
         {
-            double centerX = Left + (Width / 2.0);
-            double centerY = Top + (Height / 2.0);
+            double centerX = surfaceLeft + (Width / 2.0);
+            double centerY = surfaceTop + (Height / 2.0);
             ApplyLayout(true);
             if (!double.IsNaN(centerX) && !double.IsNaN(centerY))
             {
-                Left = centerX - (Width / 2.0);
-                Top = centerY - (Height / 2.0);
+                surfaceLeft = centerX - (Width / 2.0);
+                surfaceTop = centerY - (Height / 2.0);
             }
 
             ClampToVisibleArea();
@@ -859,13 +853,20 @@ namespace FloatingClock
             outline.Opacity = 1.0;
             Background = Brushes.Transparent;
             designCanvas.Background = Brushes.Transparent;
-            terminalSurface.Background = palette.IsOpaque
-                ? palette.CreateOpaqueSurface()
-                : palette.CreateSurface(opacity);
+            if (palette.IsOpaque)
+            {
+                terminalSurface.Background = palette.CreateOpaqueSurface();
+            }
+            else
+            {
+                terminalSurface.Background = palette.CreateSurface(opacity);
+            }
+
             outline.BorderBrush = palette.CreateBorder(opacity);
             leftDivider.Background = palette.CreateDivider(opacity);
             rightDivider.Background = palette.CreateDivider(opacity);
             ApplyDesktopGlass();
+            RequestPresent();
         }
 
         private void ApplyDesktopGlass()
@@ -875,10 +876,137 @@ namespace FloatingClock
                 return;
             }
 
-            DwmGlass.Disable(windowHandle);
-            if (windowSource != null && windowSource.CompositionTarget != null)
+            DwmGlass.NeutralizeHover(windowHandle);
+        }
+
+        private void EnsureLayeredSurface()
+        {
+            if (layeredSurface != null && hitSurface != null)
             {
-                windowSource.CompositionTarget.BackgroundColor = Colors.Transparent;
+                ApplyInteractionState();
+                return;
+            }
+
+            layeredSurface = new LayeredSurface(this);
+            layeredSurface.Create(settings.AlwaysOnTop, LayeredSurface.DisplayClassName);
+            layeredSurface.SetClickThrough(true);
+
+            hitSurface = new LayeredSurface(this);
+            hitSurface.Moved = HandleSurfaceMoved;
+            hitSurface.MoveFinished = HandleSurfaceMoveFinished;
+            hitSurface.MenuRequested = ShowClockMenu;
+            hitSurface.Create(settings.AlwaysOnTop, LayeredSurface.HitClassName);
+            ApplyInteractionState();
+        }
+
+        private void RequestPresent()
+        {
+            if (presentQueued || layeredSurface == null || hitSurface == null || hitSurface.IsDragging)
+            {
+                return;
+            }
+
+            presentQueued = true;
+            Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(PresentSurface));
+        }
+
+        private void PresentSurface()
+        {
+            presentQueued = false;
+            if (layeredSurface == null || hitSurface == null || !IsVisible || hitSurface.IsDragging)
+            {
+                return;
+            }
+
+            scaler.UpdateLayout();
+            hitSurface.PresentPlate(Width, Height, surfaceLeft, surfaceTop);
+            layeredSurface.Present(scaler, Width, Height, surfaceLeft, surfaceTop);
+        }
+
+        private void SyncSurfacePosition()
+        {
+            if (hitSurface != null && !hitSurface.IsDragging)
+            {
+                hitSurface.MoveTo(surfaceLeft, surfaceTop);
+            }
+
+            if (layeredSurface != null && (hitSurface == null || !hitSurface.IsDragging))
+            {
+                layeredSurface.MoveTo(surfaceLeft, surfaceTop);
+            }
+        }
+
+        private void HandleSurfaceMoved(double left, double top)
+        {
+            surfaceLeft = left;
+            surfaceTop = top;
+            if (layeredSurface != null)
+            {
+                layeredSurface.MoveTo(left, top);
+            }
+        }
+
+        private void ParkHostWindow()
+        {
+            Left = -32000;
+            Top = -32000;
+        }
+
+        private void HandleHostSizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (Math.Abs(Width - lastLayoutWidth) < 0.5 && Math.Abs(Height - lastLayoutHeight) < 0.5)
+            {
+                return;
+            }
+
+            lastLayoutWidth = Width;
+            lastLayoutHeight = Height;
+            RequestPresent();
+        }
+
+        private bool ClockFaceChanged()
+        {
+            string face = hourRun.Text + ":" + minuteRun.Text + secondsRun.Text + periodRun.Text
+                + "|" + yearText.Text + monthText.Text + dayText.Text;
+            if (face == lastPresentedFace)
+            {
+                return false;
+            }
+
+            lastPresentedFace = face;
+            return true;
+        }
+
+        private void HandleSurfaceMoveFinished()
+        {
+            RememberPosition();
+            persistSettings();
+        }
+
+        private void ShowClockMenu()
+        {
+            ApplyMenuPalette();
+            RefreshMenuChecks();
+            clockMenu.PlacementTarget = this;
+            clockMenu.Placement = PlacementMode.MousePoint;
+            clockMenu.IsOpen = true;
+        }
+
+        private void HandleVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            if (layeredSurface == null || hitSurface == null)
+            {
+                return;
+            }
+
+            if (IsVisible)
+            {
+                RequestPresent();
+            }
+            else
+            {
+                layeredSurface.SetVisible(false);
+                hitSurface.SetVisible(false);
             }
         }
 
@@ -897,6 +1025,7 @@ namespace FloatingClock
             colonRun.FontWeight = FontWeights.Light;
             secondsRun.FontSize = ClockTypography.SecondsSize;
             periodRun.FontSize = ClockTypography.PeriodSize;
+            RequestPresent();
         }
 
         private void ApplyGlyphContrast()
@@ -976,9 +1105,36 @@ namespace FloatingClock
 
         private void ApplyInteractionState()
         {
-            Cursor = settings.Locked ? Cursors.Arrow : Cursors.SizeAll;
-            Topmost = settings.AlwaysOnTop;
+            Cursor = Cursors.Arrow;
+            Topmost = false;
             ApplyExtendedStyles();
+            if (layeredSurface != null)
+            {
+                layeredSurface.SetClickThrough(true);
+                layeredSurface.SetVisible(IsVisible);
+            }
+
+            if (hitSurface != null)
+            {
+                hitSurface.Locked = settings.Locked;
+                hitSurface.SetClickThrough(settings.ClickThrough);
+                hitSurface.SetVisible(IsVisible);
+            }
+
+            SetSurfacesTopmost(settings.AlwaysOnTop);
+        }
+
+        private void SetSurfacesTopmost(bool topmost)
+        {
+            if (hitSurface != null)
+            {
+                hitSurface.SetTopmost(topmost);
+            }
+
+            if (layeredSurface != null)
+            {
+                layeredSurface.SetTopmost(topmost);
+            }
         }
 
         private void ApplyExtendedStyles()
@@ -992,14 +1148,8 @@ namespace FloatingClock
             long style = current
                 | NativeMethods.ToolWindowStyle
                 | NativeMethods.NoActivateStyle;
-            if (settings.ClickThrough)
-            {
-                style |= NativeMethods.TransparentStyle;
-            }
-            else
-            {
-                style &= ~NativeMethods.TransparentStyle;
-            }
+            style &= ~NativeMethods.LayeredStyle;
+            style &= ~NativeMethods.TransparentStyle;
 
             if (style != current)
             {
@@ -1021,14 +1171,16 @@ namespace FloatingClock
             const double margin = 10.0;
             if (settings.DockAnchor == 2)
             {
-                Left = workArea.Left + margin;
-                Top = workArea.Bottom - Height - margin;
+                surfaceLeft = workArea.Left + margin;
+                surfaceTop = workArea.Bottom - Height - margin;
             }
             else
             {
-                Left = workArea.Right - Width - margin;
-                Top = workArea.Top + margin;
+                surfaceLeft = workArea.Right - Width - margin;
+                surfaceTop = workArea.Top + margin;
             }
+
+            SyncSurfacePosition();
 
             RememberPosition();
             if (save)
@@ -1039,14 +1191,15 @@ namespace FloatingClock
 
         private Rect GetCurrentWorkArea()
         {
-            if (windowHandle == IntPtr.Zero)
+            IntPtr probe = layeredSurface != null ? layeredSurface.Handle : windowHandle;
+            if (probe == IntPtr.Zero)
             {
                 return SystemParameters.WorkArea;
             }
 
             try
             {
-                Forms.Screen screen = Forms.Screen.FromHandle(windowHandle);
+                Forms.Screen screen = Forms.Screen.FromHandle(probe);
                 System.Drawing.Rectangle area = screen.WorkingArea;
                 Point topLeft = DeviceToDip(area.Left, area.Top);
                 Point bottomRight = DeviceToDip(area.Right, area.Bottom);
@@ -1071,8 +1224,8 @@ namespace FloatingClock
 
         private void RememberPosition()
         {
-            settings.Left = Left;
-            settings.Top = Top;
+            settings.Left = surfaceLeft;
+            settings.Top = surfaceTop;
         }
 
         private void SaveAndRefresh()

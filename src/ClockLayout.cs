@@ -113,7 +113,7 @@ namespace FloatingClock
                 t = 1.0;
             }
 
-            return (byte)Math.Round(118.0 + (t * 80.0));
+            return (byte)Math.Round(88.0 + (t * 72.0));
         }
 
         public static bool Matches(double value, double preset)

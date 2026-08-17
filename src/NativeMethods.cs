@@ -11,19 +11,28 @@ namespace FloatingClock
         public const long LayeredStyle = 0x00080000L;
         public const long NoActivateStyle = 0x08000000L;
         public const uint LayeredColorKey = 0x00000001;
+        public const uint LayeredAlpha = 0x00000002;
         public const uint ColorKeyRef = 0x00FF00FF;
         public const uint SwpNoSize = 0x0001;
         public const uint SwpNoMove = 0x0002;
         public const uint SwpNoActivate = 0x0010;
         public const uint SwpNoRedraw = 0x0008;
+        public const uint SwpNoCopyBits = 0x0100;
+        public const uint SwpNoSendChanging = 0x0400;
+        public const uint SwpDeferErase = 0x2000;
         public const uint SwpFrameChanged = 0x0020;
+        public const uint QuietMoveFlags = SwpNoSize | SwpNoActivate | SwpNoRedraw | SwpNoCopyBits | SwpNoSendChanging | SwpDeferErase;
         public const int WindowPosChangingMessage = 0x0046;
+        public const int StyleChangingMessage = 0x007C;
+        public const int NcHitTestMessage = 0x0084;
         public const int MouseActivateMessage = 0x0021;
         public const int NcActivateMessage = 0x0086;
         public const int ActivateMessage = 0x0006;
         public const int EraseBackgroundMessage = 0x0014;
         public const int MouseActivateNoActivate = 3;
+        public const int HitTestClient = 1;
         public const int DwmTransitionsForcedDisabled = 3;
+        public const int DwmCloakAttribute = 13;
         public static readonly IntPtr TopmostInsertAfter = new IntPtr(-1);
         public const int HotKeyMessage = 0x0312;
         public const int ClickThroughHotKeyId = 0x434C;
@@ -57,6 +66,25 @@ namespace FloatingClock
 
         [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")]
         private static extern IntPtr SetWindowLongPtr64(IntPtr handle, int index, IntPtr value);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct StyleStruct
+        {
+            public int StyleOld;
+            public int StyleNew;
+        }
+
+        public static void KeepLayeredStyle(IntPtr stylePointer)
+        {
+            if (stylePointer == IntPtr.Zero)
+            {
+                return;
+            }
+
+            StyleStruct style = (StyleStruct)Marshal.PtrToStructure(stylePointer, typeof(StyleStruct));
+            style.StyleNew |= (int)LayeredStyle;
+            Marshal.StructureToPtr(style, stylePointer, true);
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct WindowPos
@@ -113,6 +141,17 @@ namespace FloatingClock
 
             int disabled = 1;
             DwmSetWindowAttribute(handle, DwmTransitionsForcedDisabled, ref disabled, 4);
+        }
+
+        public static void Cloak(IntPtr handle, bool cloak)
+        {
+            if (handle == IntPtr.Zero)
+            {
+                return;
+            }
+
+            int value = cloak ? 1 : 0;
+            DwmSetWindowAttribute(handle, DwmCloakAttribute, ref value, 4);
         }
 
         public static void SuppressUnchangedRedraw(IntPtr handle, IntPtr lParam)

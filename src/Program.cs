@@ -1,8 +1,11 @@
 using System;
+using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Runtime.Serialization;
 using System.Security.Principal;
 using System.Threading;
+using Microsoft.Win32;
 
 namespace FloatingClock
 {
@@ -14,6 +17,16 @@ namespace FloatingClock
             if (HasArgument(args, "--self-test"))
             {
                 return SelfTest.Run();
+            }
+
+            if (PreferIntegratedGpu())
+            {
+                string exe = CurrentExecutable();
+                if (!string.IsNullOrEmpty(exe))
+                {
+                    Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+                    return 0;
+                }
             }
 
             string identity = GetIdentityToken();
@@ -41,6 +54,52 @@ namespace FloatingClock
                     return application.Run();
                 }
             }
+        }
+
+        private static bool PreferIntegratedGpu()
+        {
+            string exe = CurrentExecutable();
+            if (string.IsNullOrEmpty(exe))
+            {
+                return false;
+            }
+
+            const string preferred = "GpuPreference=1;";
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\DirectX\UserGpuPreferences"))
+                {
+                    if (key == null)
+                    {
+                        return false;
+                    }
+
+                    string current = key.GetValue(exe) as string;
+                    if (string.Equals(current, preferred, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    key.SetValue(exe, preferred);
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string CurrentExecutable()
+        {
+            string location = Assembly.GetExecutingAssembly().Location;
+            if (!string.IsNullOrEmpty(location))
+            {
+                return location;
+            }
+
+            string[] args = Environment.GetCommandLineArgs();
+            return args.Length > 0 ? args[0] : string.Empty;
         }
 
         private static bool HasArgument(string[] args, string expected)
@@ -207,6 +266,12 @@ namespace FloatingClock
                 if (ClockLayout.TimeColumnWidth(true, false) <= ClockLayout.TimeColumnWidth(true, true))
                 {
                     return 20;
+                }
+
+                int dragProof = LayeredDragProof.Run();
+                if (dragProof != 0)
+                {
+                    return dragProof;
                 }
 
                 return 0;
