@@ -88,11 +88,13 @@ namespace FloatingClock
 
             Title = "FLOAT CLOCK";
             WindowStyle = WindowStyle.None;
-            AllowsTransparency = false;
+            AllowsTransparency = true;
             Background = Brushes.Transparent;
             ResizeMode = ResizeMode.NoResize;
             ShowInTaskbar = false;
             ShowActivated = false;
+            Focusable = false;
+            FocusVisualStyle = null;
             Topmost = settings.AlwaysOnTop;
             WindowStartupLocation = WindowStartupLocation.Manual;
             UseLayoutRounding = true;
@@ -855,20 +857,11 @@ namespace FloatingClock
             double opacity = OpacityPresets.Normalize(settings.SurfaceOpacity);
             terminalSurface.Opacity = 1.0;
             outline.Opacity = 1.0;
-            if (palette.IsOpaque)
-            {
-                Brush fill = palette.CreateOpaqueSurface();
-                Background = fill;
-                designCanvas.Background = fill;
-                terminalSurface.Background = fill;
-            }
-            else
-            {
-                Background = Brushes.Transparent;
-                designCanvas.Background = Brushes.Transparent;
-                terminalSurface.Background = Brushes.Transparent;
-            }
-
+            Background = Brushes.Transparent;
+            designCanvas.Background = Brushes.Transparent;
+            terminalSurface.Background = palette.IsOpaque
+                ? palette.CreateOpaqueSurface()
+                : palette.CreateSurface(opacity);
             outline.BorderBrush = palette.CreateBorder(opacity);
             leftDivider.Background = palette.CreateDivider(opacity);
             rightDivider.Background = palette.CreateDivider(opacity);
@@ -877,27 +870,15 @@ namespace FloatingClock
 
         private void ApplyDesktopGlass()
         {
-            if (windowHandle == IntPtr.Zero || palette == null)
+            if (windowHandle == IntPtr.Zero)
             {
                 return;
             }
 
-            if (palette.IsOpaque)
+            DwmGlass.Disable(windowHandle);
+            if (windowSource != null && windowSource.CompositionTarget != null)
             {
-                DwmGlass.Disable(windowHandle);
-                if (windowSource != null && windowSource.CompositionTarget != null)
-                {
-                    windowSource.CompositionTarget.BackgroundColor = palette.SurfaceTint;
-                }
-            }
-            else
-            {
-                if (windowSource != null && windowSource.CompositionTarget != null)
-                {
-                    windowSource.CompositionTarget.BackgroundColor = Colors.Transparent;
-                }
-
-                DwmGlass.Enable(windowHandle, palette.AccentColor(settings.SurfaceOpacity));
+                windowSource.CompositionTarget.BackgroundColor = Colors.Transparent;
             }
         }
 

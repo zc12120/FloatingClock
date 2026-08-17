@@ -10,9 +10,26 @@ namespace FloatingClock
         private const int AccentFlagsFill = 2;
         private const int CornerPreference = 33;
         private const int CornerRoundSmall = 3;
+        private const int SystemBackdropType = 38;
+        private const int BackdropNone = 1;
+        private const int BorderColor = 34;
+        private const int CaptionColor = 35;
+        private const uint ColorNone = 0xFFFFFFFE;
 
         public static void Disable(IntPtr handle)
         {
+            if (handle == IntPtr.Zero)
+            {
+                return;
+            }
+
+            int square = 1;
+            DwmSetWindowAttribute(handle, CornerPreference, ref square, 4);
+            int backdrop = BackdropNone;
+            DwmSetWindowAttribute(handle, SystemBackdropType, ref backdrop, 4);
+            uint noColor = ColorNone;
+            DwmSetWindowAttributeUInt(handle, BorderColor, ref noColor, 4);
+            DwmSetWindowAttributeUInt(handle, CaptionColor, ref noColor, 4);
             Apply(handle, 0, 0, false);
         }
 
@@ -39,6 +56,11 @@ namespace FloatingClock
 
             int corner = CornerRoundSmall;
             DwmSetWindowAttribute(handle, CornerPreference, ref corner, 4);
+            int backdrop = BackdropNone;
+            DwmSetWindowAttribute(handle, SystemBackdropType, ref backdrop, 4);
+            uint noColor = ColorNone;
+            DwmSetWindowAttributeUInt(handle, BorderColor, ref noColor, 4);
+            DwmSetWindowAttributeUInt(handle, CaptionColor, ref noColor, 4);
 
             AccentPolicy policy = new AccentPolicy
             {
@@ -106,6 +128,13 @@ namespace FloatingClock
             IntPtr handle,
             int attribute,
             ref int attributeValue,
+            int attributeSize);
+
+        [DllImport("dwmapi.dll", EntryPoint = "DwmSetWindowAttribute")]
+        private static extern int DwmSetWindowAttributeUInt(
+            IntPtr handle,
+            int attribute,
+            ref uint attributeValue,
             int attributeSize);
     }
 }
