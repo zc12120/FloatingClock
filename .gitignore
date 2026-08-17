@@ -1,0 +1,8 @@
+bin/
+obj/
+*.user
+*.suo
+artifacts/*.tmp
+artifacts/*.bak
+artifacts/*.ttf
+src/*.user
