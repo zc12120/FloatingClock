@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using Forms = System.Windows.Forms;
 
 namespace FloatingClock
@@ -10,8 +11,8 @@ namespace FloatingClock
         public static int Run()
         {
             Forms.Form backdrop = null;
-            LayeredSurface displaySurface = null;
-            LayeredSurface hitSurface = null;
+            Forms.Panel contrastPanel = null;
+            LayeredSurface surface = null;
             Point cursorPosition = Forms.Cursor.Position;
             try
             {
@@ -25,6 +26,12 @@ namespace FloatingClock
                     TopMost = true,
                     Bounds = new Rectangle(120, 120, 520, 260)
                 };
+                contrastPanel = new Forms.Panel
+                {
+                    BackColor = Color.Black,
+                    Bounds = new Rectangle(130, 0, 390, 260)
+                };
+                backdrop.Controls.Add(contrastPanel);
                 backdrop.Show();
                 backdrop.Refresh();
                 Forms.Application.DoEvents();
@@ -34,40 +41,47 @@ namespace FloatingClock
                 int left = backdrop.Left + 40;
                 int top = backdrop.Top + 80;
 
-                displaySurface = new LayeredSurface(null);
-                displaySurface.Create(true, LayeredSurface.DisplayClassName);
-                displaySurface.SetClickThrough(true);
-                if (!displaySurface.PresentSolid(width, height, left, top, 120, 16, 28, 34))
+                surface = new LayeredSurface(null);
+                surface.Create(true, LayeredSurface.DisplayClassName);
+                surface.SetClickThrough(false);
+                if (!surface.PresentSolid(width, height, left, top, 120, 16, 28, 34))
                 {
                     return 31;
                 }
 
-                hitSurface = new LayeredSurface(null);
-                hitSurface.Create(true, LayeredSurface.HitClassName);
-                hitSurface.SetClickThrough(false);
-                if (!hitSurface.PresentSolid(width, height, left, top, 1, 0, 0, 0))
+                surface.SetTopmost(true);
+                Forms.Application.DoEvents();
+
+                double lightBackdropLuma = SampleLuma(left + 30, top + 20, 20, 20);
+                double darkBackdropLuma = SampleLuma(left + 130, top + 20, 20, 20);
+                if (lightBackdropLuma - darkBackdropLuma < 60.0)
+                {
+                    return 37;
+                }
+
+                contrastPanel.Visible = false;
+                backdrop.Refresh();
+                Forms.Application.DoEvents();
+
+                long surfaceStyle = NativeMethods.GetWindowLong(
+                    surface.Handle,
+                    NativeMethods.ExtendedStyleIndex).ToInt64();
+                if (surface.Handle == IntPtr.Zero
+                    || (surfaceStyle & NativeMethods.TransparentStyle) != 0)
+                {
+                    return 35;
+                }
+
+                surface.SetClickThrough(true);
+                surfaceStyle = NativeMethods.GetWindowLong(
+                    surface.Handle,
+                    NativeMethods.ExtendedStyleIndex).ToInt64();
+                if ((surfaceStyle & NativeMethods.TransparentStyle) == 0)
                 {
                     return 34;
                 }
 
-                hitSurface.SetTopmost(true);
-                displaySurface.SetTopmost(true);
-                Forms.Application.DoEvents();
-
-                long displayStyle = NativeMethods.GetWindowLong(
-                    displaySurface.Handle,
-                    NativeMethods.ExtendedStyleIndex).ToInt64();
-                long hitStyle = NativeMethods.GetWindowLong(
-                    hitSurface.Handle,
-                    NativeMethods.ExtendedStyleIndex).ToInt64();
-                if (displaySurface.Handle == IntPtr.Zero
-                    || hitSurface.Handle == IntPtr.Zero
-                    || displaySurface.Handle == hitSurface.Handle
-                    || (displayStyle & NativeMethods.TransparentStyle) == 0
-                    || (hitStyle & NativeMethods.TransparentStyle) != 0)
-                {
-                    return 35;
-                }
+                surface.SetClickThrough(false);
 
                 double first = SampleLuma(left + 20, top + 16, width - 40, height - 32);
                 double mouseMin = first;
@@ -91,8 +105,7 @@ namespace FloatingClock
                 for (int step = 1; step <= 12; step++)
                 {
                     int movedLeft = left + (step * 16);
-                    hitSurface.MovePixels(movedLeft, top);
-                    displaySurface.MovePixels(movedLeft, top);
+                    surface.MovePixels(movedLeft, top);
                     Forms.Application.DoEvents();
                     System.Threading.Thread.Sleep(25);
                     double luma = SampleLuma(movedLeft + 20, top + 16, width - 40, height - 32);
@@ -104,6 +117,28 @@ namespace FloatingClock
                     return 32;
                 }
 
+                int directLeft = left + (12 * 16);
+                double inputLeft = double.NaN;
+                double inputTop = double.NaN;
+                bool inputFinished = false;
+                surface.Moved = delegate(double movedLeft, double movedTop)
+                {
+                    inputLeft = movedLeft;
+                    inputTop = movedTop;
+                };
+                surface.MoveFinished = delegate { inputFinished = true; };
+                Forms.Cursor.Position = new Point(directLeft + 20, top + 20);
+                SendMessage(surface.Handle, 0x0201, new IntPtr(1), IntPtr.Zero);
+                Forms.Cursor.Position = new Point(directLeft + 44, top + 28);
+                SendMessage(surface.Handle, 0x0200, new IntPtr(1), IntPtr.Zero);
+                SendMessage(surface.Handle, 0x0202, IntPtr.Zero, IntPtr.Zero);
+                if (!inputFinished
+                    || Math.Abs(inputLeft - (directLeft + 24)) > 1.0
+                    || Math.Abs(inputTop - (top + 8)) > 1.0)
+                {
+                    return 38;
+                }
+
                 return 0;
             }
             catch
@@ -113,14 +148,9 @@ namespace FloatingClock
             finally
             {
                 Forms.Cursor.Position = cursorPosition;
-                if (displaySurface != null)
+                if (surface != null)
                 {
-                    displaySurface.Dispose();
-                }
-
-                if (hitSurface != null)
-                {
-                    hitSurface.Dispose();
+                    surface.Dispose();
                 }
 
                 if (backdrop != null)
@@ -168,5 +198,12 @@ namespace FloatingClock
                 return count == 0 ? 0 : total / count;
             }
         }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(
+            IntPtr handle,
+            uint message,
+            IntPtr wParam,
+            IntPtr lParam);
     }
 }

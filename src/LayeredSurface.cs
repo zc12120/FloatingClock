@@ -10,7 +10,6 @@ namespace FloatingClock
     internal sealed class LayeredSurface : IDisposable
     {
         public const string DisplayClassName = "FloatingClock.LayeredSurface";
-        public const string HitClassName = "FloatingClock.HitSurface";
         private const int WindowPopup = unchecked((int)0x80000000);
         private const int ExtendedTopmost = 0x00000008;
         private const int ShowNoActivate = 4;
@@ -211,20 +210,6 @@ namespace FloatingClock
 
             Marshal.Copy(pixels, 0, bits, pixels.Length);
             return PushLayer(left, top);
-        }
-
-        public void PresentPlate(double dipWidth, double dipHeight, double dipLeft, double dipTop)
-        {
-            Point scale = DeviceScale();
-            PresentSolid(
-                Math.Max(1, (int)Math.Round(dipWidth * scale.X)),
-                Math.Max(1, (int)Math.Round(dipHeight * scale.Y)),
-                (int)Math.Round(dipLeft * scale.X),
-                (int)Math.Round(dipTop * scale.Y),
-                1,
-                0,
-                0,
-                0);
         }
 
         public void MoveTo(double dipLeft, double dipTop)

@@ -63,7 +63,6 @@ namespace FloatingClock
 
         private ClockPalette palette;
         private LayeredSurface layeredSurface;
-        private LayeredSurface hitSurface;
         private bool allowClose;
         private bool hotKeyRegistered;
         private bool presentQueued;
@@ -430,12 +429,6 @@ namespace FloatingClock
         {
             if (settings.AlwaysOnTop && layeredSurface != null)
             {
-                if (hitSurface != null)
-                {
-                    hitSurface.SetTopmost(true);
-                    hitSurface.BringForward();
-                }
-
                 layeredSurface.SetTopmost(true);
                 layeredSurface.BringForward();
             }
@@ -496,12 +489,6 @@ namespace FloatingClock
             {
                 layeredSurface.Dispose();
                 layeredSurface = null;
-            }
-
-            if (hitSurface != null)
-            {
-                hitSurface.Dispose();
-                hitSurface = null;
             }
 
             base.OnClosed(e);
@@ -881,27 +868,23 @@ namespace FloatingClock
 
         private void EnsureLayeredSurface()
         {
-            if (layeredSurface != null && hitSurface != null)
+            if (layeredSurface != null)
             {
                 ApplyInteractionState();
                 return;
             }
 
             layeredSurface = new LayeredSurface(this);
+            layeredSurface.Moved = HandleSurfaceMoved;
+            layeredSurface.MoveFinished = HandleSurfaceMoveFinished;
+            layeredSurface.MenuRequested = ShowClockMenu;
             layeredSurface.Create(settings.AlwaysOnTop, LayeredSurface.DisplayClassName);
-            layeredSurface.SetClickThrough(true);
-
-            hitSurface = new LayeredSurface(this);
-            hitSurface.Moved = HandleSurfaceMoved;
-            hitSurface.MoveFinished = HandleSurfaceMoveFinished;
-            hitSurface.MenuRequested = ShowClockMenu;
-            hitSurface.Create(settings.AlwaysOnTop, LayeredSurface.HitClassName);
             ApplyInteractionState();
         }
 
         private void RequestPresent()
         {
-            if (presentQueued || layeredSurface == null || hitSurface == null || hitSurface.IsDragging)
+            if (presentQueued || layeredSurface == null || layeredSurface.IsDragging)
             {
                 return;
             }
@@ -913,24 +896,18 @@ namespace FloatingClock
         private void PresentSurface()
         {
             presentQueued = false;
-            if (layeredSurface == null || hitSurface == null || !IsVisible || hitSurface.IsDragging)
+            if (layeredSurface == null || !IsVisible || layeredSurface.IsDragging)
             {
                 return;
             }
 
             scaler.UpdateLayout();
-            hitSurface.PresentPlate(Width, Height, surfaceLeft, surfaceTop);
             layeredSurface.Present(scaler, Width, Height, surfaceLeft, surfaceTop);
         }
 
         private void SyncSurfacePosition()
         {
-            if (hitSurface != null && !hitSurface.IsDragging)
-            {
-                hitSurface.MoveTo(surfaceLeft, surfaceTop);
-            }
-
-            if (layeredSurface != null && (hitSurface == null || !hitSurface.IsDragging))
+            if (layeredSurface != null && !layeredSurface.IsDragging)
             {
                 layeredSurface.MoveTo(surfaceLeft, surfaceTop);
             }
@@ -940,10 +917,6 @@ namespace FloatingClock
         {
             surfaceLeft = left;
             surfaceTop = top;
-            if (layeredSurface != null)
-            {
-                layeredSurface.MoveTo(left, top);
-            }
         }
 
         private void ParkHostWindow()
@@ -994,7 +967,7 @@ namespace FloatingClock
 
         private void HandleVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
         {
-            if (layeredSurface == null || hitSurface == null)
+            if (layeredSurface == null)
             {
                 return;
             }
@@ -1006,7 +979,6 @@ namespace FloatingClock
             else
             {
                 layeredSurface.SetVisible(false);
-                hitSurface.SetVisible(false);
             }
         }
 
@@ -1110,15 +1082,9 @@ namespace FloatingClock
             ApplyExtendedStyles();
             if (layeredSurface != null)
             {
-                layeredSurface.SetClickThrough(true);
+                layeredSurface.Locked = settings.Locked;
+                layeredSurface.SetClickThrough(settings.ClickThrough);
                 layeredSurface.SetVisible(IsVisible);
-            }
-
-            if (hitSurface != null)
-            {
-                hitSurface.Locked = settings.Locked;
-                hitSurface.SetClickThrough(settings.ClickThrough);
-                hitSurface.SetVisible(IsVisible);
             }
 
             SetSurfacesTopmost(settings.AlwaysOnTop);
@@ -1126,11 +1092,6 @@ namespace FloatingClock
 
         private void SetSurfacesTopmost(bool topmost)
         {
-            if (hitSurface != null)
-            {
-                hitSurface.SetTopmost(topmost);
-            }
-
             if (layeredSurface != null)
             {
                 layeredSurface.SetTopmost(topmost);

@@ -253,6 +253,25 @@ namespace FloatingClock
                     return 21;
                 }
 
+                ClockPalette transparentPalette = ClockPalette.Create(0, 0);
+                System.Windows.Media.SolidColorBrush transparentSurface =
+                    transparentPalette.CreateSurface(OpacityPresets.Faint) as System.Windows.Media.SolidColorBrush;
+                System.Windows.Media.SolidColorBrush transparentBorder =
+                    transparentPalette.CreateBorder(OpacityPresets.Faint) as System.Windows.Media.SolidColorBrush;
+                System.Windows.Media.SolidColorBrush transparentDivider =
+                    transparentPalette.CreateDivider(OpacityPresets.Faint) as System.Windows.Media.SolidColorBrush;
+                byte transparentAlpha = OpacityPresets.SurfaceAlpha(OpacityPresets.Faint);
+                if (transparentSurface == null
+                    || transparentBorder == null
+                    || transparentDivider == null
+                    || transparentAlpha >= 255
+                    || transparentSurface.Color.A != transparentAlpha
+                    || transparentBorder.Color.A != (byte)Math.Min(255, transparentAlpha + 48)
+                    || transparentDivider.Color.A != (byte)Math.Min(255, transparentAlpha + 16))
+                {
+                    return 22;
+                }
+
                 if (ClockLayout.DesignWidth(false, false, true) >= ClockLayout.DesignWidth(true, false, true))
                 {
                     return 18;
