@@ -5,12 +5,12 @@ namespace FloatingClock
 {
     internal static class ClockLayout
     {
-        public const double DesignHeight = 68.0;
-        public const double DateColumnWidth = 44.0;
-        public const double CornerRadius = 6.0;
+        public const double DesignHeight = 64.0;
+        public const double DateColumnWidth = 40.0;
+        public const double CornerRadius = 8.0;
         public const double DividerWidth = 1.0;
-        public const double TimeColumnBase = 108.0;
-        public const double TimeColumnWithSeconds = 138.0;
+        public const double TimeColumnBase = 120.0;
+        public const double TimeColumnWithSeconds = 154.0;
         public const double PeriodExtra = 24.0;
         public const double NoDatePadding = 14.0;
 
@@ -91,6 +91,16 @@ namespace FloatingClock
         public static string TrayTime(DateTime value)
         {
             return value.ToString("HH:mm", DisplayCulture);
+        }
+    }
+
+    internal static class ClockSchedule
+    {
+        public static TimeSpan NextTick(DateTime now, bool showSeconds)
+        {
+            long period = showSeconds ? TimeSpan.TicksPerSecond : TimeSpan.TicksPerMinute;
+            // A small margin avoids firing just before the displayed unit changes.
+            return TimeSpan.FromTicks(period - (now.Ticks % period) + TimeSpan.TicksPerMillisecond * 10);
         }
     }
 

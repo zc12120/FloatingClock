@@ -222,7 +222,11 @@ namespace FloatingClock
             }
 
             byte alpha = (byte)Math.Min(255, OpacityPresets.SurfaceAlpha(opacity) + 48);
-            return Solid(WithAlpha(BorderTint, alpha));
+            Color quieter = Color.FromRgb(
+                (byte)((BorderTint.R + SurfaceTint.R) / 2),
+                (byte)((BorderTint.G + SurfaceTint.G) / 2),
+                (byte)((BorderTint.B + SurfaceTint.B) / 2));
+            return Solid(WithAlpha(quieter, alpha));
         }
 
         public Brush CreateDivider(double opacity)

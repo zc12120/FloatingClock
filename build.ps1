@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$Install,
-    [switch]$NoLaunch
+    [switch]$NoLaunch,
+    [switch]$VisualTest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -109,6 +110,8 @@ foreach ($reference in $references) {
     }
 }
 
+& (Join-Path $projectRoot 'tests\InstallHelpers.Tests.ps1')
+
 $compilerArguments = @(
     '/nologo',
     '/target:winexe',
@@ -130,13 +133,6 @@ if ($LASTEXITCODE -ne 0) {
     throw "C# compiler exited with code $LASTEXITCODE"
 }
 
-$testProcess = Start-Process -FilePath $outputPath -ArgumentList '--self-test' -Wait -PassThru
-if ($testProcess.ExitCode -ne 0) {
-    throw "Self-test failed with code $($testProcess.ExitCode)"
-}
-
-Write-Host "Build passed: $outputPath"
-
 $fontRoot = Join-Path $projectRoot 'fonts'
 if (Test-Path $fontRoot) {
     Get-ChildItem -Path $fontRoot -Filter '*.ttf' | ForEach-Object {
@@ -144,13 +140,33 @@ if (Test-Path $fontRoot) {
     }
 }
 
+$testProcess = Start-Process -FilePath $outputPath -ArgumentList '--self-test' -Wait -PassThru
+if ($testProcess.ExitCode -ne 0) {
+    $reportPath = Join-Path $artifactRoot 'self-test.log'
+    if (Test-Path $reportPath) { Get-Content $reportPath }
+    throw "Self-test failed with code $($testProcess.ExitCode)"
+}
+
+Write-Host "Build passed: $outputPath"
+
+if ($VisualTest) {
+    $visualProcess = Start-Process -FilePath $outputPath -ArgumentList '--visual-test' -Wait -PassThru
+    if ($visualProcess.ExitCode -ne 0) { throw "Visual test failed with code $($visualProcess.ExitCode)" }
+}
+
 if ($Install) {
     $installRoot = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'FloatingClock'
     $installPath = Join-Path $installRoot 'FloatingClock.exe'
+    $settingsPath = Join-Path $installRoot 'settings.xml'
+    $startupPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'Floating Clock.lnk'
+    . (Join-Path $projectRoot 'scripts\InstallHelpers.ps1')
+    $enableStartup = Get-ClockStartupPreference -InstallPath $installPath -SettingsPath $settingsPath -ShortcutPath $startupPath
     New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
 
-    Get-Process -Name 'FloatingClock' -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process -Name 'FloatingClock' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq $installPath } | Stop-Process -Force
     Start-Sleep -Milliseconds 250
+    Set-ClockSavedStartupPreference -SettingsPath $settingsPath -Enabled $enableStartup
     Copy-Item -Path $outputPath -Destination $installPath -Force
     if (Test-Path $fontRoot) {
         Get-ChildItem -Path $fontRoot -Filter '*.ttf' | ForEach-Object {
@@ -160,10 +176,12 @@ if ($Install) {
 
     $shell = New-Object -ComObject WScript.Shell
     try {
-        $startupPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'Floating Clock.lnk'
         $desktopPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Floating Clock.lnk'
 
-        foreach ($shortcutPath in @($startupPath, $desktopPath)) {
+        $shortcutPaths = @($desktopPath)
+        if ($enableStartup) { $shortcutPaths += $startupPath }
+        elseif (Test-Path -LiteralPath $startupPath) { Remove-Item -LiteralPath $startupPath -Force }
+        foreach ($shortcutPath in $shortcutPaths) {
             $shortcut = $shell.CreateShortcut($shortcutPath)
             $shortcut.TargetPath = $installPath
             $shortcut.WorkingDirectory = $installRoot

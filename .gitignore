@@ -6,3 +6,4 @@ artifacts/*.tmp
 artifacts/*.bak
 artifacts/*.ttf
 src/*.user
+artifacts/self-test.log

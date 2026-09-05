@@ -8,7 +8,7 @@ namespace FloatingClock
     [DataContract(Name = "FloatingClockSettings")]
     internal sealed class ClockSettings
     {
-        public const int CurrentVersion = 10;
+        public const int CurrentVersion = 11;
 
         [DataMember(Order = 1)]
         public int Version { get; set; }
@@ -58,6 +58,16 @@ namespace FloatingClock
         [DataMember(Order = 16)]
         public bool StartWithWindows { get; set; }
 
+        [DataMember(Order = 17)]
+        public bool PositionInPixels { get; set; }
+
+        [OnDeserializing]
+        private void InitializeMissingMembers(StreamingContext context)
+        {
+            // Older files have no startup member. An explicit false must still win.
+            StartWithWindows = true;
+        }
+
         public bool HasPosition
         {
             get
@@ -86,7 +96,8 @@ namespace FloatingClock
                 SurfaceTone = 0,
                 FontMode = 0,
                 DockAnchor = 2,
-                StartWithWindows = true
+                StartWithWindows = true,
+                PositionInPixels = true
             };
         }
 
@@ -143,7 +154,6 @@ namespace FloatingClock
             if (Version < 10)
             {
                 DockAnchor = 2;
-                StartWithWindows = true;
                 AlwaysOnTop = true;
             }
 
@@ -161,6 +171,17 @@ namespace FloatingClock
             }
 
             Version = CurrentVersion;
+        }
+
+        public void MigratePosition(double legacyScale)
+        {
+            if (PositionInPixels) return;
+            if (HasPosition)
+            {
+                Left *= legacyScale;
+                Top *= legacyScale;
+            }
+            PositionInPixels = true;
         }
     }
 

@@ -22,6 +22,9 @@ namespace FloatingClock
         private const int DestroyMessage = 0x0002;
         private const int PaintMessage = 0x000F;
         private const int NcPaintMessage = 0x0085;
+        private const int CaptureChangedMessage = 0x0215;
+        private const int CancelModeMessage = 0x001F;
+        private const int DpiChangedMessage = 0x02E0;
         private const int NullBrush = 5;
         private const int LeftButtonFlag = 0x0001;
         private const int ArrowCursor = 32512;
@@ -32,7 +35,6 @@ namespace FloatingClock
         private const uint DibRgb = 0;
         private static readonly IntPtr NoTopmostInsertAfter = new IntPtr(-2);
 
-        private readonly Window host;
         private readonly WndProc wndProc;
         private string className;
         private IntPtr windowHandle;
@@ -46,7 +48,9 @@ namespace FloatingClock
         private int lastLeft;
         private int lastTop;
         private bool hasLayer;
-        private bool shown;
+        private bool locked;
+        private double dpiScale = 1.0;
+        private RenderTargetBitmap renderBitmap;
         private IntPtr bits;
         private IntPtr section;
         private IntPtr memoryDc;
@@ -55,17 +59,27 @@ namespace FloatingClock
         public Action<double, double> Moved;
         public Action MoveFinished;
         public Action MenuRequested;
+        public Action DpiChanged;
 
-        public bool Locked { get; set; }
+        public bool Locked
+        {
+            get { return locked; }
+            set
+            {
+                locked = value;
+                if (value) FinishDrag(true);
+            }
+        }
+
+        public double DpiScale { get { return dpiScale; } }
 
         public bool IsDragging
         {
             get { return dragging; }
         }
 
-        public LayeredSurface(Window host)
+        public LayeredSurface()
         {
-            this.host = host;
             wndProc = HandleMessage;
         }
 
@@ -80,6 +94,11 @@ namespace FloatingClock
         }
 
         public void Create(bool topmost, string windowClassName)
+        {
+            Create(topmost, windowClassName, 0, 0);
+        }
+
+        public void Create(bool topmost, string windowClassName, int left, int top)
         {
             if (windowHandle != IntPtr.Zero)
             {
@@ -119,8 +138,8 @@ namespace FloatingClock
                 className,
                 string.Empty,
                 WindowPopup,
-                0,
-                0,
+                left,
+                top,
                 1,
                 1,
                 IntPtr.Zero,
@@ -132,23 +151,24 @@ namespace FloatingClock
                 return;
             }
 
+            dpiScale = DisplayGeometry.ScaleForWindow(windowHandle, left, top);
             NativeMethods.DisableTransitions(windowHandle);
             DwmGlass.NeutralizeHover(windowHandle);
             SetWindowTheme(windowHandle, string.Empty, string.Empty);
         }
 
-        public void Present(Visual visual, double dipWidth, double dipHeight, double dipLeft, double dipTop)
+        // Layout uses DIPs; desktop positions always use physical pixels.
+        public bool Present(Visual visual, double dipWidth, double dipHeight, double pixelLeft, double pixelTop)
         {
             if (disposed || dragging || windowHandle == IntPtr.Zero || visual == null || dipWidth < 1 || dipHeight < 1)
             {
-                return;
+                return false;
             }
 
-            Point scale = DeviceScale();
-            int width = Math.Max(1, (int)Math.Round(dipWidth * scale.X));
-            int height = Math.Max(1, (int)Math.Round(dipHeight * scale.Y));
-            int left = (int)Math.Round(dipLeft * scale.X);
-            int top = (int)Math.Round(dipTop * scale.Y);
+            int width = Math.Max(1, (int)Math.Round(dipWidth * dpiScale));
+            int height = Math.Max(1, (int)Math.Round(dipHeight * dpiScale));
+            int left = (int)Math.Round(pixelLeft);
+            int top = (int)Math.Round(pixelTop);
 
             FrameworkElement element = visual as FrameworkElement;
             if (element != null)
@@ -161,26 +181,26 @@ namespace FloatingClock
                 }
             }
 
-            RenderTargetBitmap bitmap = new RenderTargetBitmap(
-                width,
-                height,
-                96.0 * scale.X,
-                96.0 * scale.Y,
-                PixelFormats.Pbgra32);
-            bitmap.Render(visual);
-            bitmap.Freeze();
-
             if (!EnsureBuffer(width, height))
             {
-                return;
+                return false;
             }
 
-            int stride = width * 4;
-            byte[] pixels = new byte[stride * height];
-            bitmap.CopyPixels(pixels, stride, 0);
-            Marshal.Copy(pixels, 0, bits, pixels.Length);
+            if (renderBitmap == null || renderBitmap.PixelWidth != width || renderBitmap.PixelHeight != height
+                || Math.Abs(renderBitmap.DpiX - (96.0 * dpiScale)) > 0.01)
+            {
+                renderBitmap = new RenderTargetBitmap(width, height, 96.0 * dpiScale, 96.0 * dpiScale, PixelFormats.Pbgra32);
+            }
+            else
+            {
+                // Render composites onto existing pixels. Clear before reuse to keep alpha stable.
+                renderBitmap.Clear();
+            }
 
-            PushLayer(left, top);
+            renderBitmap.Render(visual);
+            int stride = width * 4;
+            renderBitmap.CopyPixels(Int32Rect.Empty, bits, stride * height, stride);
+            return PushLayer(left, top);
         }
 
         public bool PresentSolid(int width, int height, int left, int top, byte alpha, byte red, byte green, byte blue)
@@ -212,17 +232,14 @@ namespace FloatingClock
             return PushLayer(left, top);
         }
 
-        public void MoveTo(double dipLeft, double dipTop)
+        public void MoveTo(double pixelLeft, double pixelTop)
         {
             if (windowHandle == IntPtr.Zero)
             {
                 return;
             }
 
-            Point scale = DeviceScale();
-            MovePixels(
-                (int)Math.Round(dipLeft * scale.X),
-                (int)Math.Round(dipTop * scale.Y));
+            MovePixels((int)Math.Round(pixelLeft), (int)Math.Round(pixelTop));
         }
 
         public void MovePixels(int left, int top)
@@ -261,20 +278,22 @@ namespace FloatingClock
 
         public void SetVisible(bool visible)
         {
-            if (windowHandle == IntPtr.Zero || shown == visible)
+            if (windowHandle == IntPtr.Zero)
             {
                 return;
             }
 
-            shown = visible;
             if (!visible)
             {
+                FinishDrag(true);
                 ShowWindow(windowHandle, HideWindow);
                 return;
             }
 
-            ShowWindow(windowHandle, ShowNoActivate);
-            Repush();
+            if (hasLayer && !NativeMethods.IsWindowVisible(windowHandle))
+            {
+                ShowWindow(windowHandle, ShowNoActivate);
+            }
         }
 
         public void SetTopmost(bool topmost)
@@ -297,6 +316,7 @@ namespace FloatingClock
 
         public void SetClickThrough(bool enabled)
         {
+            if (enabled) FinishDrag(true);
             if (windowHandle == IntPtr.Zero)
             {
                 return;
@@ -342,7 +362,10 @@ namespace FloatingClock
             }
 
             disposed = true;
+            dragging = false;
+            if (GetCapture() == windowHandle) ReleaseCapture();
             ReleaseBuffer();
+            renderBitmap = null;
             if (windowHandle != IntPtr.Zero)
             {
                 DestroyWindow(windowHandle);
@@ -383,7 +406,18 @@ namespace FloatingClock
                 }
 
                 memoryDc = CreateCompatibleDC(screenDc);
+                if (memoryDc == IntPtr.Zero)
+                {
+                    ReleaseBuffer();
+                    return false;
+                }
                 oldBitmap = SelectObject(memoryDc, section);
+                if (oldBitmap == IntPtr.Zero || oldBitmap == new IntPtr(-1))
+                {
+                    oldBitmap = IntPtr.Zero;
+                    ReleaseBuffer();
+                    return false;
+                }
                 pixelWidth = width;
                 pixelHeight = height;
                 return true;
@@ -430,7 +464,6 @@ namespace FloatingClock
                     lastLeft = left;
                     lastTop = top;
                     hasLayer = true;
-                    shown = true;
                 }
 
                 return ok;
@@ -464,10 +497,27 @@ namespace FloatingClock
 
             pixelWidth = 0;
             pixelHeight = 0;
+            hasLayer = false;
         }
 
         private IntPtr HandleMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam)
         {
+            if (message == DpiChangedMessage)
+            {
+                dpiScale = Math.Max(1.0, (wParam.ToInt64() & 0xffff) / 96.0);
+                // Keep the cursor-relative physical position during a manual drag.
+                // The owner rerenders the logical layout at the new monitor's DPI.
+                Action changed = DpiChanged;
+                if (changed != null) changed();
+                return IntPtr.Zero;
+            }
+
+            if (message == CaptureChangedMessage || message == CancelModeMessage)
+            {
+                FinishDrag(message == CancelModeMessage);
+                return IntPtr.Zero;
+            }
+
             if (message == SetCursorMessage)
             {
                 SetCursor(LoadCursor(IntPtr.Zero, new IntPtr(Locked ? ArrowCursor : SizeAllCursor)));
@@ -525,12 +575,15 @@ namespace FloatingClock
                     int left = cursor.X - dragOffsetX;
                     int top = cursor.Y - dragOffsetY;
                     MovePixels(left, top);
-                    Point dip = PixelToDip(left, top);
                     Action<double, double> moved = Moved;
                     if (moved != null)
                     {
-                        moved(dip.X, dip.Y);
+                        moved(left, top);
                     }
+                }
+                else if (dragging)
+                {
+                    FinishDrag(true);
                 }
 
                 return IntPtr.Zero;
@@ -538,16 +591,7 @@ namespace FloatingClock
 
             if (message == LeftButtonUpMessage)
             {
-                if (dragging)
-                {
-                    dragging = false;
-                    ReleaseCapture();
-                    Action finished = MoveFinished;
-                    if (finished != null)
-                    {
-                        finished();
-                    }
-                }
+                FinishDrag(true);
 
                 return IntPtr.Zero;
             }
@@ -571,27 +615,14 @@ namespace FloatingClock
             return DefWindowProc(handle, message, wParam, lParam);
         }
 
-        private Point DeviceScale()
+        private void FinishDrag(bool releaseCapture)
         {
-            if (host == null)
-            {
-                return new Point(1, 1);
-            }
-
-            PresentationSource source = PresentationSource.FromVisual(host);
-            if (source != null && source.CompositionTarget != null)
-            {
-                Matrix matrix = source.CompositionTarget.TransformToDevice;
-                return new Point(matrix.M11, matrix.M22);
-            }
-
-            return new Point(1, 1);
-        }
-
-        private Point PixelToDip(int x, int y)
-        {
-            Point scale = DeviceScale();
-            return new Point(x / scale.X, y / scale.Y);
+            if (!dragging) return;
+            dragging = false;
+            // ReleaseCapture sends WM_CAPTURECHANGED synchronously; clear first.
+            if (releaseCapture && GetCapture() == windowHandle) ReleaseCapture();
+            Action finished = MoveFinished;
+            if (!disposed && finished != null) finished();
         }
 
         private delegate IntPtr WndProc(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
@@ -714,6 +745,9 @@ namespace FloatingClock
 
         [DllImport("user32.dll")]
         private static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetCapture();
 
         [DllImport("user32.dll")]
         private static extern bool GetCursorPos(out PointInt point);

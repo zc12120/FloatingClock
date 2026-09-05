@@ -19,6 +19,11 @@ namespace FloatingClock
                 return SelfTest.Run();
             }
 
+            if (HasArgument(args, "--visual-test"))
+            {
+                return LayeredDragProof.Run();
+            }
+
             if (PreferIntegratedGpu())
             {
                 string exe = CurrentExecutable();
@@ -241,7 +246,7 @@ namespace FloatingClock
                     return 16;
                 }
 
-                if (Math.Abs(ClockLayout.DesignWidth(true, false, true) - 198.0) > 0.001
+                if (Math.Abs(ClockLayout.DesignWidth(true, false, true) - 202.0) > 0.001
                     || ClockLooks.ScaleNames.Length != ClockLayout.Scales.Length)
                 {
                     return 17;
@@ -287,13 +292,7 @@ namespace FloatingClock
                     return 20;
                 }
 
-                int dragProof = LayeredDragProof.Run();
-                if (dragProof != 0)
-                {
-                    return dragProof;
-                }
-
-                return 0;
+                return RegressionTests.Run();
             }
             catch
             {

@@ -22,6 +22,14 @@ namespace FloatingClock
             return File.Exists(ShortcutPath);
         }
 
+        public static void ApplyPreference(ClockSettings settings, bool enabled, Action<bool> writeStartup, Action persist)
+        {
+            // Do not change the saved preference if Windows rejects the shortcut operation.
+            writeStartup(enabled);
+            settings.StartWithWindows = enabled;
+            persist();
+        }
+
         public static void SetEnabled(bool enabled)
         {
             if (!enabled)

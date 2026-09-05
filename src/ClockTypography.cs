@@ -81,29 +81,11 @@ namespace FloatingClock
         };
     }
 
-    internal static class ClockMenuChrome
-    {
-        public static readonly FontFamily Font = new FontFamily("Microsoft YaHei UI");
-        public static readonly Brush Surface = Solid(255, 28, 30, 34);
-        public static readonly Brush Foreground = Solid(255, 236, 238, 242);
-        public static readonly Brush Border = Solid(255, 72, 76, 84);
-        public static readonly Brush Separator = Solid(255, 58, 62, 70);
-        public static readonly Brush Highlight = Solid(255, 52, 90, 148);
-        public static readonly Brush ItemBackground = Brushes.Transparent;
-
-        private static SolidColorBrush Solid(byte alpha, byte red, byte green, byte blue)
-        {
-            SolidColorBrush brush = new SolidColorBrush(Color.FromArgb(alpha, red, green, blue));
-            brush.Freeze();
-            return brush;
-        }
-    }
-
     internal static class ClockTypography
     {
-        public const double TimeSize = 30.0;
-        public const double YearSize = 22.0;
-        public const double DateSize = 17.0;
+        public const double TimeSize = 32.0;
+        public const double YearSize = 20.0;
+        public const double DateSize = 18.0;
         public const double SecondsSize = 16.0;
         public const double PeriodSize = 11.0;
 
@@ -174,7 +156,7 @@ namespace FloatingClock
 
         public static FontWeight DateWeight(int fontMode)
         {
-            return FontWeights.SemiBold;
+            return FontWeights.Medium;
         }
 
         public static void Apply(TextBlock text, int fontMode, double size, FontWeight weight)

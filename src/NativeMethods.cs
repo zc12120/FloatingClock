@@ -41,6 +41,9 @@ namespace FloatingClock
         public const uint NoRepeatModifier = 0x4000;
         public const uint TKey = 0x54;
 
+        [DllImport("user32.dll")]
+        public static extern bool IsWindowVisible(IntPtr handle);
+
         public static IntPtr GetWindowLong(IntPtr handle, int index)
         {
             return IntPtr.Size == 8

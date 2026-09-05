@@ -41,7 +41,7 @@ namespace FloatingClock
                 int left = backdrop.Left + 40;
                 int top = backdrop.Top + 80;
 
-                surface = new LayeredSurface(null);
+                surface = new LayeredSurface();
                 surface.Create(true, LayeredSurface.DisplayClassName);
                 surface.SetClickThrough(false);
                 if (!surface.PresentSolid(width, height, left, top, 120, 16, 28, 34))
@@ -50,11 +50,16 @@ namespace FloatingClock
                 }
 
                 surface.SetTopmost(true);
+                surface.SetVisible(true);
+                if (!NativeMethods.IsWindowVisible(surface.Handle)) return 39;
                 Forms.Application.DoEvents();
+                System.Threading.Thread.Sleep(80);
 
                 double lightBackdropLuma = SampleLuma(left + 30, top + 20, 20, 20);
                 double darkBackdropLuma = SampleLuma(left + 130, top + 20, 20, 20);
-                if (lightBackdropLuma - darkBackdropLuma < 60.0)
+                if (lightBackdropLuma - darkBackdropLuma < 60.0
+                    || lightBackdropLuma > 190.0 || lightBackdropLuma < 110.0
+                    || darkBackdropLuma < 5.0 || darkBackdropLuma > 45.0)
                 {
                     return 37;
                 }
