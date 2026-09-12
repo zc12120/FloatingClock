@@ -32,7 +32,15 @@ namespace FloatingClock
                 Check(report, "Startup preference persistence and failure", StartupPreference);
                 Check(report, "Legacy position migration and monitor gaps", Geometry);
                 Check(report, "Shared menu actions, selection and disabled states", MenuState);
-                report.Add("PASS: 10 regression groups");
+                Check(report, "Missing settings members and strict XML validation", SettingsRegressionTests.DefaultsAndValidation);
+                Check(report, "Atomic storage, unchanged saves and read-only recovery", SettingsRegressionTests.AtomicStorageAndRecovery);
+                Check(report, "Extreme coordinates and startup rollback", SettingsRegressionTests.CoordinatesAndStartupRollback);
+                Check(report, "Non-topmost restore without activation", NonTopmostRestore);
+                Check(report, "Deferred display / work-area changes during drag", DeferredDisplayChanges);
+                Check(report, "Native window registration failure and disposal", NativeCreationFailure);
+                Check(report, "DWM pointer width and cached font resolution", InteropAndFonts);
+                Check(report, "Single-instance acknowledgement, exit race and abandonment", InstanceLifecycle);
+                report.Add("PASS: " + report.FindAll(delegate(string line) { return line.StartsWith("PASS: ", StringComparison.Ordinal); }).Count + " regression groups");
                 return 0;
             }
             catch (Exception e)
@@ -283,6 +291,16 @@ namespace FloatingClock
             Assert(ClockSchedule.NextTick(time, false).TotalMilliseconds == 50760, "Minute boundary is wrong");
             time = new DateTime(2026, 12, 31, 23, 59, 59, 995);
             Assert(ClockSchedule.NextTick(time, false).TotalMilliseconds == 15, "Midnight boundary is wrong");
+            Assert(ClockSchedule.NextTickAfterUpdate(time, time.AddMilliseconds(10), false).TotalMilliseconds == 10,
+                "Crossing midnight during an update must trigger a catch-up tick");
+            Assert(ClockSchedule.NextTickAfterUpdate(time, time.AddMinutes(-1), false).TotalMilliseconds == 10,
+                "Clock rollback must not leave stale time until the next minute");
+            DateTime second = new DateTime(2026, 9, 5, 12, 0, 5, 999);
+            Assert(ClockSchedule.NextTickAfterUpdate(second, second.AddMilliseconds(2), true).TotalMilliseconds == 10,
+                "Crossing a second during rendering must trigger a catch-up tick");
+            DateTime stable = new DateTime(2026, 9, 5, 12, 0, 5, 0);
+            Assert(ClockSchedule.NextTickAfterUpdate(stable, stable.AddMilliseconds(100), false)
+                == ClockSchedule.NextTick(stable.AddMilliseconds(100), false), "Unchanged minute must retain low-frequency scheduling");
         }
 
         private static void StartupPreference()
@@ -358,6 +376,198 @@ namespace FloatingClock
                 Forms.ToolStripMenuItem font = (Forms.ToolStripMenuItem)menu.Items.Find("font.5", true)[0];
                 font.PerformClick();
                 Assert(settings.FontMode == 5 && font.Checked && fixture.Saves >= 5, "Font selection was not applied and persisted");
+
+                // A preset is one appearance transaction, not three partial saves.
+                double opacity = settings.SurfaceOpacity;
+                int scale = settings.ScaleMode;
+                Forms.ToolStripMenuItem theme = (Forms.ToolStripMenuItem)menu.Items.Find("theme", true)[0];
+                Assert(theme.ShortcutKeyDisplayString == "自定义", "Manual changes still claimed a preset");
+                for (int i = 0; i < ClockThemePresets.Names.Length; i++)
+                {
+                    Forms.ToolStripMenuItem preset = (Forms.ToolStripMenuItem)menu.Items.Find("theme." + i, true)[0];
+                    int saves = fixture.Saves;
+                    preset.PerformClick();
+                    Assert(fixture.Saves == saves + 1 && preset.Checked && ClockThemePresets.Match(settings) == i,
+                        "Preset was not applied and persisted as one transaction");
+                    Assert(settings.ShowSeconds && settings.ScaleMode == scale && settings.SurfaceOpacity == opacity,
+                        "Preset changed time format, size or opacity");
+                    Assert(theme.ShortcutKeyDisplayString == ClockThemePresets.Names[i]
+                        && menu.Items.Find("opacity", true)[0].Enabled == !ClockLooks.IsOpaqueSurface(settings.SurfaceTone),
+                        "Preset summary or surface controls were stale");
+                    preset.PerformClick();
+                    Assert(fixture.Saves == saves + 1, "Selecting the current preset rewrote settings");
+                }
+                ((Forms.ToolStripMenuItem)menu.Items.Find("font.1", true)[0]).PerformClick();
+                Assert(theme.ShortcutKeyDisplayString == "自定义"
+                    && !((Forms.ToolStripMenuItem)menu.Items.Find("theme.2", true)[0]).Checked,
+                    "Customizing a preset left a misleading selection");
+            }
+        }
+
+        private static void NonTopmostRestore()
+        {
+            using (LayeredSurface clock = NewSurface("RestoreClock"))
+            using (LayeredSurface cover = NewSurface("RestoreCover"))
+            {
+                Assert(clock.PresentSolid(24, 20, -30000, -30000, 160, 30, 50, 40), "Clock presentation failed");
+                Assert(cover.PresentSolid(24, 20, -30000, -30000, 160, 50, 30, 40), "Cover presentation failed");
+                clock.SetVisible(true);
+                cover.SetVisible(true);
+                cover.BringForward();
+                IntPtr foreground = GetForegroundWindow();
+                clock.BringForward();
+                bool aboveCover = false;
+                for (IntPtr next = GetWindow(clock.Handle, 2); next != IntPtr.Zero; next = GetWindow(next, 2))
+                    if (next == cover.Handle) { aboveCover = true; break; }
+                Assert(aboveCover, "Restore did not raise the clock above a normal overlapping window");
+                Assert((NativeMethods.GetWindowLong(clock.Handle, NativeMethods.ExtendedStyleIndex).ToInt64() & 8) == 0,
+                    "Restoring a normal clock unexpectedly enabled always-on-top");
+                Assert(GetForegroundWindow() == foreground, "Restore stole foreground input focus");
+                clock.SetTopmost(true);
+                clock.BringForward();
+                Assert((NativeMethods.GetWindowLong(clock.Handle, NativeMethods.ExtendedStyleIndex).ToInt64() & 8) != 0,
+                    "Restoring a topmost clock lost its preference");
+            }
+        }
+
+        private static void DeferredDisplayChanges()
+        {
+            ClockSettings settings = ClockSettings.CreateDefault();
+            using (WindowFixture fixture = new WindowFixture(settings))
+            {
+                fixture.ShowOffscreen();
+                fixture.Window.Hide();
+                Pump();
+                LayeredSurface surface = (LayeredSurface)Field(fixture.Window, "layeredSurface");
+                Rect area = DisplayGeometry.WorkAreaAt(0, 0);
+                double left = area.Left + 50, top = area.Top + 50;
+                Set(surface, "dragging", true);
+                Invoke(fixture.Window, "HandleSurfaceMoved", left, top);
+                fixture.Window.HandleDisplayChanged();
+                IntPtr host = (IntPtr)Field(fixture.Window, "windowHandle");
+                SendMessage(host, NativeMethods.SettingChangeMessage, new IntPtr(NativeMethods.SetWorkAreaAction), IntPtr.Zero);
+                Pump();
+                Assert((double)Field(fixture.Window, "surfaceLeft") == left && (double)Field(fixture.Window, "surfaceTop") == top,
+                    "Display changes overwrote cursor-relative drag coordinates");
+                Assert((bool)Field(fixture.Window, "displayUpdatePending") && settings.DockAnchor == 2,
+                    "Display changes during drag were discarded instead of deferred");
+                SendMessage(surface.Handle, 0x0202, IntPtr.Zero, IntPtr.Zero);
+                Pump();
+                Assert(settings.DockAnchor == 0 && settings.Left == left && settings.Top == top,
+                    "Releasing a drag after display changes jumped back to the old dock");
+                Assert(!(bool)Field(fixture.Window, "displayUpdatePending") && !NativeMethods.IsWindowVisible(surface.Handle),
+                    "Deferred display handling remained pending or showed a hidden clock");
+                fixture.Window.CanSaveSettings = false;
+                fixture.Window.RefreshMenuState();
+                Assert(!fixture.Window.SettingsMenu.Items.Find("startup", true)[0].Enabled,
+                    "Read-only recovery allowed changing the startup preference");
+                Point clamped = DisplayGeometry.Clamp(new Rect(1E200, -1E200, 200, 60), new[] { area });
+                Assert(area.Contains(new Rect(clamped, new Size(200, 60))), "Extreme coordinates were not clamped to a screen");
+            }
+        }
+
+        private static void NativeCreationFailure()
+        {
+            using (LayeredSurface first = NewSurface("DuplicateClass"))
+            using (LayeredSurface second = new LayeredSurface())
+            {
+                bool rejected = false;
+                try { second.Create(false, "FloatingClock.Test.DuplicateClass", -30000, -30000); }
+                catch (System.ComponentModel.Win32Exception) { rejected = true; }
+                Assert(rejected && second.Handle == IntPtr.Zero && first.Handle != IntPtr.Zero,
+                    "A duplicate class reused another instance's native callback");
+                first.Dispose();
+                rejected = false;
+                try { first.Create(false); }
+                catch (ObjectDisposedException) { rejected = true; }
+                Assert(rejected, "A disposed native surface was recreated");
+            }
+            // A failed registration must not unregister the live owner's class or leave it leaked.
+            using (LayeredSurface replacement = NewSurface("DuplicateClass")) { }
+        }
+
+        private static void InteropAndFonts()
+        {
+            Type native = typeof(DwmGlass).GetNestedType("WindowCompositionAttributeData", BindingFlags.NonPublic);
+            Assert(native.GetField("SizeOfData").FieldType == typeof(UIntPtr), "DWM SIZE_T is not pointer-sized");
+            Assert(Marshal.SizeOf(native) == (IntPtr.Size == 8 ? 24 : 12), "Unexpected DWM interop layout");
+            Assert(ClockTypography.InstalledFamily("FloatingClock.NonexistentFont.54677") == null,
+                "A missing system font was incorrectly accepted");
+            for (int mode = 0; mode < ClockLooks.FontNames.Length; mode++)
+            {
+                FontFamily first = ClockTypography.Create(mode);
+                Assert(first != null && object.ReferenceEquals(first, ClockTypography.Create(mode)),
+                    "Repeated font selection reloaded the same font family");
+                if (mode != 3)
+                    Assert(first.BaseUri != null, "Bundled font unexpectedly fell back to a system substitute: mode " + mode + " / " + first.Source);
+            }
+        }
+
+        private static void InstanceLifecycle()
+        {
+            for (int scenario = 0; scenario < 2; scenario++)
+            {
+                bool closing = scenario == 1;
+                string name = @"Local\FloatingClock.Test.Instance." + Guid.NewGuid().ToString("N");
+                Exception workerError = null;
+                using (System.Threading.ManualResetEvent ready = new System.Threading.ManualResetEvent(false))
+                using (System.Threading.ManualResetEvent finish = new System.Threading.ManualResetEvent(false))
+                {
+                    System.Threading.Thread owner = new System.Threading.Thread(delegate()
+                    {
+                        try
+                        {
+                            using (System.Threading.Mutex mutex = new System.Threading.Mutex(false, name))
+                            using (System.Threading.EventWaitHandle activate = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset, name + ".Activate"))
+                            using (System.Threading.EventWaitHandle accepted = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.ManualReset, name + ".Accepted"))
+                            {
+                                mutex.WaitOne();
+                                try
+                                {
+                                    ready.Set();
+                                    Assert(activate.WaitOne(5000), "Secondary instance did not signal activation");
+                                    if (!closing)
+                                    {
+                                        accepted.Set();
+                                        Assert(finish.WaitOne(5000), "Instance test did not finish");
+                                    }
+                                    // The closing instance releases its lock without accepting the request.
+                                }
+                                finally { mutex.ReleaseMutex(); }
+                            }
+                        }
+                        catch (Exception exception) { workerError = exception; ready.Set(); }
+                    });
+                    owner.IsBackground = true;
+                    owner.Start();
+                    try
+                    {
+                        Assert(ready.WaitOne(5000), "Primary instance did not initialize");
+                        if (workerError != null) throw workerError;
+                        using (System.Threading.Mutex client = new System.Threading.Mutex(false, name))
+                        {
+                            bool acquired = InstanceCoordinator.AcquireOrActivate(client, name + ".Activate", name + ".Accepted");
+                            try { Assert(acquired == closing, "Activation was lost during exit or created a duplicate instance"); }
+                            finally { if (acquired) client.ReleaseMutex(); }
+                        }
+                    }
+                    finally
+                    {
+                        finish.Set();
+                        Assert(owner.Join(5000), "Instance test worker did not exit");
+                    }
+                    if (workerError != null) throw workerError;
+                }
+            }
+            string abandonedName = @"Local\FloatingClock.Test.Abandoned." + Guid.NewGuid().ToString("N");
+            using (System.Threading.Mutex abandoned = new System.Threading.Mutex(false, abandonedName))
+            {
+                System.Threading.Thread owner = new System.Threading.Thread(delegate() { abandoned.WaitOne(); });
+                owner.Start();
+                Assert(owner.Join(5000), "Abandonment test worker did not finish");
+                bool acquired = InstanceCoordinator.AcquireOrActivate(abandoned, abandonedName + ".Activate", abandonedName + ".Accepted");
+                try { Assert(acquired, "An abandoned lifecycle mutex prevented a fresh instance"); }
+                finally { if (acquired) abandoned.ReleaseMutex(); }
             }
         }
 
@@ -394,5 +604,9 @@ namespace FloatingClock
         private static extern IntPtr SendMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
         [DllImport("user32.dll")]
         private static extern bool GetWindowRect(IntPtr handle, out NativeRect rect);
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetWindow(IntPtr handle, uint command);
     }
 }

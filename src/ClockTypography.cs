@@ -33,7 +33,7 @@ namespace FloatingClock
         {
             "夜绿",
             "石墨",
-            "藏青",
+            "钴蓝",
             "青钢",
             "紫夜",
             "琥珀",
@@ -89,7 +89,21 @@ namespace FloatingClock
         public const double SecondsSize = 16.0;
         public const double PeriodSize = 11.0;
 
+        private static readonly FontFamily[] CachedFamilies = new FontFamily[ClockLooks.FontNames.Length];
+
         public static FontFamily Create(int fontMode)
+        {
+            if (fontMode < 0 || fontMode >= CachedFamilies.Length) fontMode = 0;
+            FontFamily family = CachedFamilies[fontMode];
+            if (family == null)
+            {
+                family = Resolve(fontMode);
+                CachedFamilies[fontMode] = family;
+            }
+            return family;
+        }
+
+        private static FontFamily Resolve(int fontMode)
         {
             switch (fontMode)
             {
@@ -104,7 +118,7 @@ namespace FloatingClock
                         new FontFamily("Cascadia Code, Cascadia Mono, Consolas, Courier New"));
                 case 3:
                     return FirstAvailable(
-                        new FontFamily("Bahnschrift"),
+                        InstalledFamily("Bahnschrift"),
                         FileFamily("Exo2-SemiBold.ttf", "Exo 2"),
                         new FontFamily("Segoe UI Semibold, Consolas"));
                 case 4:
@@ -188,6 +202,16 @@ namespace FloatingClock
             return new FontFamily("Consolas");
         }
 
+        internal static FontFamily InstalledFamily(string name)
+        {
+            foreach (FontFamily family in Fonts.SystemFontFamilies)
+            {
+                foreach (string familyName in family.FamilyNames.Values)
+                    if (string.Equals(familyName, name, StringComparison.OrdinalIgnoreCase)) return family;
+            }
+            return null;
+        }
+
         private static FontFamily FileFamily(string fileName, string familyName)
         {
             string[] roots =
@@ -208,7 +232,13 @@ namespace FloatingClock
 
                 try
                 {
-                    return new FontFamily(new Uri(path), "./#" + familyName);
+                    // A FontFamily constructor is lazy: validate the actual family rather than
+                    // accepting a missing/damaged font and silently rendering a system substitute.
+                    foreach (FontFamily family in Fonts.GetFontFamilies(new Uri(Path.GetDirectoryName(path) + Path.DirectorySeparatorChar)))
+                    {
+                        foreach (string name in family.FamilyNames.Values)
+                            if (string.Equals(name, familyName, StringComparison.OrdinalIgnoreCase)) return family;
+                    }
                 }
                 catch
                 {

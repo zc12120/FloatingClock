@@ -22,12 +22,30 @@ namespace FloatingClock
             return File.Exists(ShortcutPath);
         }
 
-        public static void ApplyPreference(ClockSettings settings, bool enabled, Action<bool> writeStartup, Action persist)
+        public static void ApplyPreference(ClockSettings settings, bool enabled, Action<bool> writeStartup, Action persist, Func<bool> readStartup = null)
         {
-            // Do not change the saved preference if Windows rejects the shortcut operation.
+            // Treat the shortcut and saved preference as one reversible operation.
+            bool previous = settings.StartWithWindows;
+            bool previousShortcut = readStartup == null ? previous : readStartup();
             writeStartup(enabled);
             settings.StartWithWindows = enabled;
-            persist();
+            try
+            {
+                persist();
+            }
+            catch (Exception saveError)
+            {
+                settings.StartWithWindows = previous;
+                try
+                {
+                    writeStartup(previousShortcut);
+                }
+                catch (Exception rollbackError)
+                {
+                    throw new AggregateException("设置未能保存，启动项回滚也失败。请检查开机启动状态。", saveError, rollbackError);
+                }
+                throw new IOException("设置未能保存，本次开机启动更改已撤销。", saveError);
+            }
         }
 
         public static void SetEnabled(bool enabled)

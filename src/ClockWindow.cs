@@ -33,6 +33,7 @@ namespace FloatingClock
         private readonly Border leftDivider;
         private readonly Border rightDivider;
         private readonly Border outline;
+        private readonly ReloadClockChrome reloadChrome;
         private readonly Viewbox scaler;
         private readonly TextBlock timeText;
         private readonly Viewbox timeScaler;
@@ -54,6 +55,8 @@ namespace FloatingClock
         private bool presentQueued;
         private bool movedDuringDrag;
         private bool displayUpdateQueued;
+        private bool displayUpdatePending;
+        private DateTime lastClockSample;
         private double surfaceLeft;
         private double surfaceTop;
         private double lastLayoutWidth;
@@ -73,6 +76,7 @@ namespace FloatingClock
             Action exitRequested)
         {
             this.settings = settings;
+            CanSaveSettings = true;
             this.persistSettings = persistSettings;
             this.clickThroughChanged = clickThroughChanged;
             this.getStartupEnabled = getStartupEnabled;
@@ -127,8 +131,9 @@ namespace FloatingClock
             leftDivider = new Border
             {
                 Width = 1,
-                Margin = new Thickness(0, 16, 0, 16),
+                Margin = new Thickness(0, 19, 0, 17),
                 Opacity = 0.6,
+                RenderTransform = new SkewTransform(-12, 0),
                 IsHitTestVisible = false
             };
             Grid.SetColumn(leftDivider, 1);
@@ -171,8 +176,9 @@ namespace FloatingClock
             rightDivider = new Border
             {
                 Width = 1,
-                Margin = new Thickness(0, 16, 0, 16),
+                Margin = new Thickness(0, 19, 0, 17),
                 Opacity = 0.6,
+                RenderTransform = new SkewTransform(-12, 0),
                 IsHitTestVisible = false
             };
             Grid.SetColumn(rightDivider, 3);
@@ -195,21 +201,21 @@ namespace FloatingClock
             terminalSurface = new Border
             {
                 Height = ClockLayout.DesignHeight,
-                CornerRadius = new CornerRadius(ClockLayout.CornerRadius),
                 Child = terminalGrid,
                 IsHitTestVisible = false
             };
-            AutomationProperties.SetName(terminalSurface, "CLI clock");
+            AutomationProperties.SetName(terminalSurface, "Reload clock");
             designCanvas.Children.Add(terminalSurface);
 
             outline = new Border
             {
                 Height = ClockLayout.DesignHeight,
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(ClockLayout.CornerRadius),
                 IsHitTestVisible = false
             };
             designCanvas.Children.Add(outline);
+            reloadChrome = new ReloadClockChrome();
+            designCanvas.Children.Add(reloadChrome);
 
             scaler = new Viewbox
             {
@@ -246,6 +252,8 @@ namespace FloatingClock
             UpdateClock(DateTime.Now, true);
         }
 
+        public bool CanSaveSettings { get; set; }
+
         public bool ClickThrough
         {
             get { return settings.ClickThrough; }
@@ -266,7 +274,15 @@ namespace FloatingClock
 
         public void PrepareForExit()
         {
+            if (allowClose) return;
             allowClose = true;
+            displayUpdatePending = false;
+            if (movedDuringDrag)
+            {
+                settings.DockAnchor = 0;
+                movedDuringDrag = false;
+            }
+            // 退出只记录最后实际拖动位置，不再应用排队的停靠或限位。
             RememberPosition();
             clockTimer.Stop();
         }
@@ -317,6 +333,14 @@ namespace FloatingClock
             SaveAndRefresh();
         }
 
+        public void SetThemePreset(int index)
+        {
+            if (!ClockThemePresets.Apply(settings, index)) return;
+            ApplyFont();
+            ApplyTheme();
+            SaveAndRefresh();
+        }
+
         public void SetSurfaceTone(int surfaceTone)
         {
             if (settings.SurfaceTone == surfaceTone)
@@ -338,6 +362,7 @@ namespace FloatingClock
 
             settings.FontMode = fontMode;
             ApplyFont();
+            RefreshChrome();
             SaveAndRefresh();
         }
 
@@ -391,17 +416,25 @@ namespace FloatingClock
 
         public void HandleDisplayChanged()
         {
-            if (allowClose) return;
-            ApplyExtendedStyles();
-            if (settings.DockAnchor == 0)
+            if (allowClose || Dispatcher.HasShutdownStarted) return;
+            displayUpdatePending = true;
+            if (displayUpdateQueued || (layeredSurface != null && layeredSurface.IsDragging)) return;
+            displayUpdateQueued = true;
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(delegate
             {
-                ClampToVisibleArea();
-            }
-            else
-            {
-                ApplyDock(true);
-            }
+                displayUpdateQueued = false;
+                ApplyPendingDisplayUpdate();
+            }));
+        }
 
+        private void ApplyPendingDisplayUpdate()
+        {
+            if (allowClose || !displayUpdatePending || (layeredSurface != null && layeredSurface.IsDragging)) return;
+            displayUpdatePending = false;
+            ApplyExtendedStyles();
+            if (settings.DockAnchor == 0) ClampToVisibleArea();
+            else ApplyDock(false);
+            persistSettings();
             RequestPresent();
         }
 
@@ -441,16 +474,12 @@ namespace FloatingClock
 
         public void BringClockForward()
         {
-            if (settings.AlwaysOnTop && layeredSurface != null)
-            {
-                layeredSurface.SetTopmost(true);
-                layeredSurface.BringForward();
-            }
+            if (layeredSurface != null) layeredSurface.BringForward();
         }
 
         public void ClampToVisibleArea()
         {
-            if (double.IsNaN(surfaceLeft) || double.IsNaN(surfaceTop))
+            if (!ClockSettings.IsValidCoordinate(surfaceLeft) || !ClockSettings.IsValidCoordinate(surfaceTop))
             {
                 ApplyDock(true);
                 return;
@@ -559,6 +588,12 @@ namespace FloatingClock
             IntPtr lParam,
             ref bool handled)
         {
+            if (message == NativeMethods.DisplayChangeMessage
+                || (message == NativeMethods.SettingChangeMessage && wParam.ToInt64() == NativeMethods.SetWorkAreaAction))
+            {
+                HandleDisplayChanged();
+            }
+
             if (message == NativeMethods.WindowPosChangingMessage)
             {
                 NativeMethods.SuppressUnchangedRedraw(handle, lParam);
@@ -611,11 +646,12 @@ namespace FloatingClock
 
         private void ScheduleNextTick()
         {
-            clockTimer.Interval = ClockSchedule.NextTick(DateTime.Now, settings.ShowSeconds);
+            clockTimer.Interval = ClockSchedule.NextTickAfterUpdate(lastClockSample, DateTime.Now, settings.ShowSeconds);
         }
 
         private void UpdateClock(DateTime now, bool forceDate)
         {
+            lastClockSample = now;
             hourRun.Text = ClockFormatter.Hour(now, settings.Use24Hour);
             minuteRun.Text = ClockFormatter.Minute(now);
             secondsRun.Text = ClockFormatter.SecondsSuffix(now, settings.ShowSeconds);
@@ -686,6 +722,8 @@ namespace FloatingClock
             designCanvas.Width = designWidth;
             terminalSurface.Width = designWidth;
             outline.Width = designWidth;
+            designCanvas.Clip = ReloadClockChrome.Silhouette(designWidth, ClockLayout.DesignHeight);
+            RefreshChrome();
 
             double scale = ClockLayout.ScaleFactor(settings.ScaleMode);
             Width = designWidth * scale;
@@ -707,9 +745,18 @@ namespace FloatingClock
             yearText.Foreground = palette.DateInk;
             monthText.Foreground = palette.DateInk;
             dayText.Foreground = palette.DateInk;
+            RefreshChrome();
             ApplyGlyphContrast();
             ApplyOpacity();
             UpdateClock(DateTime.Now, true);
+        }
+
+        private void RefreshChrome()
+        {
+            if (reloadChrome == null || palette == null) return;
+            int preset = ClockThemePresets.Match(settings);
+            reloadChrome.Configure(palette, settings.ShowDate,
+                preset >= 0 ? ClockThemePresets.Captions[preset] : "CUSTOM");
         }
 
         private void ApplyOpacity()
@@ -758,14 +805,24 @@ namespace FloatingClock
                 return;
             }
 
-            layeredSurface = new LayeredSurface();
-            layeredSurface.Moved = HandleSurfaceMoved;
-            layeredSurface.MoveFinished = HandleSurfaceMoveFinished;
-            layeredSurface.MenuRequested = ShowClockMenu;
-            layeredSurface.DpiChanged = HandleSurfaceDpiChanged;
-            layeredSurface.Create(settings.AlwaysOnTop, LayeredSurface.DisplayClassName,
-                (int)Math.Round(surfaceLeft), (int)Math.Round(surfaceTop));
-            ApplyInteractionState();
+            LayeredSurface surface = new LayeredSurface();
+            try
+            {
+                surface.Moved = HandleSurfaceMoved;
+                surface.MoveFinished = HandleSurfaceMoveFinished;
+                surface.MenuRequested = ShowClockMenu;
+                surface.DpiChanged = HandleSurfaceDpiChanged;
+                surface.Create(settings.AlwaysOnTop, LayeredSurface.DisplayClassName,
+                    (int)Math.Round(surfaceLeft), (int)Math.Round(surfaceTop));
+                layeredSurface = surface;
+                ApplyInteractionState();
+            }
+            catch
+            {
+                surface.Dispose();
+                layeredSurface = null;
+                throw;
+            }
         }
 
         private void RequestPresent()
@@ -812,14 +869,7 @@ namespace FloatingClock
 
         private void HandleSurfaceDpiChanged()
         {
-            if (allowClose || displayUpdateQueued) return;
-            displayUpdateQueued = true;
-            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(delegate
-            {
-                displayUpdateQueued = false;
-                if (allowClose || layeredSurface == null || layeredSurface.IsDragging) return;
-                HandleDisplayChanged();
-            }));
+            HandleDisplayChanged();
         }
 
         private void ParkHostWindow()
@@ -853,14 +903,21 @@ namespace FloatingClock
 
         private void HandleSurfaceMoveFinished()
         {
-            if (movedDuringDrag)
+            if (allowClose) return;
+            bool moved = movedDuringDrag;
+            if (moved)
             {
                 settings.DockAnchor = 0;
                 movedDuringDrag = false;
+            }
+            if (displayUpdatePending) ApplyPendingDisplayUpdate();
+            else if (moved)
+            {
                 ClampToVisibleArea();
                 persistSettings();
             }
             RefreshCurrentTime();
+            RefreshMenuChecks();
         }
 
         public Forms.ContextMenuStrip SettingsMenu { get { return clockMenu.Menu; } }
@@ -892,6 +949,7 @@ namespace FloatingClock
         {
             int fontMode = settings.FontMode;
             ClockTypography.Apply(timeText, fontMode, ClockTypography.TimeSize, ClockTypography.TimeWeight(fontMode));
+            timeText.FontStyle = fontMode == 4 ? FontStyles.Italic : FontStyles.Normal;
             ClockTypography.Apply(yearText, fontMode, ClockTypography.YearSize, ClockTypography.DateWeight(fontMode));
             ClockTypography.Apply(monthText, fontMode, ClockTypography.DateSize, ClockTypography.DateWeight(fontMode));
             ClockTypography.Apply(dayText, fontMode, ClockTypography.DateSize, ClockTypography.DateWeight(fontMode));

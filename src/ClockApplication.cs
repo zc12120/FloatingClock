@@ -12,7 +12,9 @@ namespace FloatingClock
     internal sealed class ClockApplication : Application
     {
         private readonly ClockSettings settings;
+        private readonly SettingsLoadResult loadedSettings;
         private readonly EventWaitHandle activationEvent;
+        private readonly EventWaitHandle acceptedEvent;
         private ClockWindow clockWindow;
         private Forms.NotifyIcon trayIcon;
         private Icon ownedTrayIcon;
@@ -20,11 +22,15 @@ namespace FloatingClock
         private DispatcherTimer trayTextTimer;
         private bool exiting;
         private bool clickThroughTipShown;
+        private bool saveFailureNotified;
+        private DateTime lastTraySample;
 
-        public ClockApplication(ClockSettings settings, EventWaitHandle activationEvent)
+        public ClockApplication(SettingsLoadResult loadedSettings, EventWaitHandle activationEvent, EventWaitHandle acceptedEvent)
         {
-            this.settings = settings;
+            this.loadedSettings = loadedSettings;
+            this.settings = loadedSettings.Settings;
             this.activationEvent = activationEvent;
+            this.acceptedEvent = acceptedEvent;
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
         }
 
@@ -42,8 +48,10 @@ namespace FloatingClock
                 ExitApplication);
 
             BuildTrayIcon();
+            clockWindow.CanSaveSettings = loadedSettings.CanSave;
             clockWindow.Show();
-            SetStartupEnabled(settings.StartWithWindows);
+            if (loadedSettings.CanSave) SetStartupEnabled(settings.StartWithWindows);
+            else NotifySettingsProblem(loadedSettings.Notice);
 
             clockWindow.ApplyPreferredDock();
             PersistSettings();
@@ -61,7 +69,12 @@ namespace FloatingClock
                 activationEvent,
                 delegate
                 {
-                    Dispatcher.BeginInvoke((Action)ShowClock);
+                    QueueUi(delegate
+                    {
+                        ShowClock();
+                        // A signal is successful only after the UI has accepted it, not while exiting.
+                        if (!exiting) acceptedEvent.Set();
+                    });
                 },
                 null,
                 Timeout.Infinite,
@@ -78,26 +91,28 @@ namespace FloatingClock
             trayTextTimer.Tick += delegate
             {
                 UpdateTrayState();
-                trayTextTimer.Interval = ClockSchedule.NextTick(DateTime.Now, false);
+                ScheduleTrayTick();
             };
-            trayTextTimer.Start();
             UpdateTrayState();
+            ScheduleTrayTick();
+            trayTextTimer.Start();
         }
 
         protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
         {
-            PersistSettings();
             exiting = true;
             if (clockWindow != null)
             {
                 clockWindow.PrepareForExit();
             }
+            PersistSettings();
 
             base.OnSessionEnding(e);
         }
 
         protected override void OnExit(ExitEventArgs e)
         {
+            exiting = true;
             SystemEvents.DisplaySettingsChanged -= HandleDisplaySettingsChanged;
             SystemEvents.TimeChanged -= HandleTimeChanged;
             SystemEvents.PowerModeChanged -= HandlePowerModeChanged;
@@ -226,9 +241,16 @@ namespace FloatingClock
 
         private void SetStartupEnabled(bool enabled)
         {
+            if (!loadedSettings.CanSave)
+            {
+                NotifySettingsProblem(loadedSettings.Notice);
+                return;
+            }
             try
             {
-                StartupManager.ApplyPreference(settings, enabled, StartupManager.SetEnabled, PersistSettings);
+                StartupManager.ApplyPreference(settings, enabled, StartupManager.SetEnabled,
+                    delegate { SettingsStore.Save(settings); }, StartupManager.IsEnabled);
+                saveFailureNotified = false;
             }
             catch (Exception exception)
             {
@@ -250,18 +272,54 @@ namespace FloatingClock
                 return;
             }
 
+            lastTraySample = DateTime.Now;
             clockWindow.RefreshMenuState();
-            trayIcon.Text = "悬浮时钟  " + ClockFormatter.TrayTime(DateTime.Now);
+            trayIcon.Text = "悬浮时钟  " + ClockFormatter.TrayTime(lastTraySample);
+        }
+
+        private void ScheduleTrayTick()
+        {
+            if (trayTextTimer != null)
+                trayTextTimer.Interval = ClockSchedule.NextTickAfterUpdate(lastTraySample, DateTime.Now, false);
         }
 
         private void PersistSettings()
         {
+            if (!loadedSettings.CanSave) return;
             try
             {
                 SettingsStore.Save(settings);
+                saveFailureNotified = false;
             }
-            catch
+            catch (Exception exception)
             {
+                if (!saveFailureNotified)
+                {
+                    saveFailureNotified = true;
+                    NotifySettingsProblem("当前设置尚未保存，重启后可能恢复旧设置。请检查文件权限或磁盘空间。\n" + exception.Message);
+                }
+            }
+        }
+
+        private void NotifySettingsProblem(string message)
+        {
+            if (trayIcon == null || string.IsNullOrEmpty(message)) return;
+            trayIcon.ShowBalloonTip(8000, "悬浮时钟 · 设置提示", message, Forms.ToolTipIcon.Warning);
+        }
+
+        private void QueueUi(Action action)
+        {
+            if (exiting || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    if (!exiting && !Dispatcher.HasShutdownStarted) action();
+                }));
+            }
+            catch (InvalidOperationException)
+            {
+                if (!exiting && !Dispatcher.HasShutdownStarted) throw;
             }
         }
 
@@ -272,7 +330,7 @@ namespace FloatingClock
                 return;
             }
 
-            Dispatcher.BeginInvoke((Action)clockWindow.HandleDisplayChanged);
+            QueueUi(clockWindow.HandleDisplayChanged);
         }
 
         private void HandlePowerModeChanged(object sender, PowerModeChangedEventArgs e)
@@ -282,14 +340,13 @@ namespace FloatingClock
 
         private void HandleTimeChanged(object sender, EventArgs e)
         {
-            if (exiting || Dispatcher.HasShutdownStarted) return;
-            Dispatcher.BeginInvoke(new Action(delegate
+            QueueUi(delegate
             {
-                if (exiting || clockWindow == null) return;
+                if (clockWindow == null) return;
                 clockWindow.RefreshCurrentTime();
                 UpdateTrayState();
-                if (trayTextTimer != null) trayTextTimer.Interval = ClockSchedule.NextTick(DateTime.Now, false);
-            }));
+                ScheduleTrayTick();
+            });
         }
 
         private void ExitApplication()

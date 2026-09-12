@@ -37,26 +37,32 @@ namespace FloatingClock
             string identity = GetIdentityToken();
             string mutexName = @"Local\FloatingClock.Mutex." + identity;
             string activationName = @"Local\FloatingClock.Activate." + identity;
-            bool ownsMutex;
+            string acceptedName = activationName + ".Accepted";
 
-            using (Mutex mutex = new Mutex(true, mutexName, out ownsMutex))
+            using (Mutex mutex = new Mutex(false, mutexName))
             {
-                if (!ownsMutex)
+                bool ownsMutex = false;
+                try
                 {
-                    SignalExistingInstance(activationName);
-                    return 0;
+                    ownsMutex = InstanceCoordinator.AcquireOrActivate(mutex, activationName, acceptedName);
+                    if (!ownsMutex) return 0;
+                    using (EventWaitHandle acceptedEvent = new EventWaitHandle(false, EventResetMode.ManualReset, acceptedName))
+                    using (EventWaitHandle activationEvent = new EventWaitHandle(false, EventResetMode.AutoReset, activationName))
+                    {
+                        SettingsLoadResult settings = SettingsStore.Load();
+                        ClockApplication application = new ClockApplication(settings, activationEvent, acceptedEvent);
+                        return application.Run();
+                    }
                 }
-
-                bool created;
-                using (EventWaitHandle activationEvent = new EventWaitHandle(
-                    false,
-                    EventResetMode.AutoReset,
-                    activationName,
-                    out created))
+                catch (Exception exception)
                 {
-                    ClockSettings settings = SettingsStore.Load();
-                    ClockApplication application = new ClockApplication(settings, activationEvent);
-                    return application.Run();
+                    System.Windows.MessageBox.Show("悬浮时钟无法启动。\n\n" + exception.Message,
+                        "悬浮时钟", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+                    return 1;
+                }
+                finally
+                {
+                    if (ownsMutex) mutex.ReleaseMutex();
                 }
             }
         }
@@ -124,10 +130,10 @@ namespace FloatingClock
         {
             try
             {
-                SecurityIdentifier identifier = WindowsIdentity.GetCurrent().User;
-                if (identifier != null)
+                using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
                 {
-                    return identifier.Value.Replace('-', '_');
+                    SecurityIdentifier identifier = identity.User;
+                    if (identifier != null) return identifier.Value.Replace('-', '_');
                 }
             }
             catch
@@ -137,27 +143,57 @@ namespace FloatingClock
             return Environment.UserName.Replace(' ', '_');
         }
 
-        private static void SignalExistingInstance(string activationName)
+    }
+
+    internal static class InstanceCoordinator
+    {
+        internal static bool AcquireOrActivate(Mutex mutex, string activationName, string acceptedName)
         {
-            for (int attempt = 0; attempt < 10; attempt++)
+            if (Acquire(mutex, 0)) return true;
+            Stopwatch timeout = Stopwatch.StartNew();
+            while (timeout.ElapsedMilliseconds < 10000)
             {
+                EventWaitHandle activation = null;
+                EventWaitHandle accepted = null;
                 try
                 {
-                    using (EventWaitHandle activationEvent = EventWaitHandle.OpenExisting(activationName))
+                    try { activation = EventWaitHandle.OpenExisting(activationName); }
+                    catch (WaitHandleCannotBeOpenedException)
                     {
-                        activationEvent.Set();
-                        return;
+                        if (Acquire(mutex, 100)) return true;
+                        continue;
                     }
+                    try { accepted = EventWaitHandle.OpenExisting(acceptedName); }
+                    catch (WaitHandleCannotBeOpenedException) { }
+                    if (accepted != null) accepted.Reset();
+                    activation.Set();
+                    if (accepted == null)
+                    {
+                        // Compatibility with pre-1.9.1 instances, which have no acknowledgement event.
+                        return Acquire(mutex, 250);
+                    }
+                    try
+                    {
+                        int result = WaitHandle.WaitAny(new WaitHandle[] { mutex, accepted }, 250);
+                        if (result == 0) return true;
+                        if (result == 1) return false;
+                    }
+                    catch (AbandonedMutexException) { return true; }
                 }
-                catch (WaitHandleCannotBeOpenedException)
+                finally
                 {
-                    Thread.Sleep(100);
+                    if (activation != null) activation.Dispose();
+                    if (accepted != null) accepted.Dispose();
                 }
-                catch
-                {
-                    return;
-                }
+                if (Acquire(mutex, 0)) return true;
             }
+            throw new TimeoutException("已有时钟实例没有响应。请从托盘退出旧实例后重试。");
+        }
+
+        private static bool Acquire(Mutex mutex, int milliseconds)
+        {
+            try { return mutex.WaitOne(milliseconds); }
+            catch (AbandonedMutexException) { return true; }
         }
     }
 

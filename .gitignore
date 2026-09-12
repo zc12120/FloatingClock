@@ -7,3 +7,8 @@ artifacts/*.bak
 artifacts/*.ttf
 src/*.user
 artifacts/self-test.log
+artifacts/*.pdb
+artifacts/*.exe.config
+artifacts/fonts/
+artifacts/install-test.log
+artifacts/preview/

@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -100,61 +101,66 @@ namespace FloatingClock
 
         public void Create(bool topmost, string windowClassName, int left, int top)
         {
+            if (disposed) throw new ObjectDisposedException("LayeredSurface");
             if (windowHandle != IntPtr.Zero)
             {
                 return;
             }
 
-            className = string.IsNullOrEmpty(windowClassName) ? DisplayClassName : windowClassName;
-            WndClassEx windowClass = new WndClassEx();
-            windowClass.Size = Marshal.SizeOf(typeof(WndClassEx));
-            windowClass.Procedure = wndProc;
-            windowClass.Instance = GetModuleHandle(null);
-            windowClass.Cursor = LoadCursor(IntPtr.Zero, new IntPtr(SizeAllCursor));
-            windowClass.Background = GetStockObject(NullBrush);
-            windowClass.ClassName = className;
-            ushort atom = RegisterClassEx(ref windowClass);
-            if (atom == 0)
+            try
             {
-                int error = Marshal.GetLastWin32Error();
-                if (error != 1410)
+                className = string.IsNullOrEmpty(windowClassName) ? DisplayClassName : windowClassName;
+                WndClassEx windowClass = new WndClassEx();
+                windowClass.Size = Marshal.SizeOf(typeof(WndClassEx));
+                windowClass.Procedure = wndProc;
+                windowClass.Instance = GetModuleHandle(null);
+                windowClass.Cursor = LoadCursor(IntPtr.Zero, new IntPtr(SizeAllCursor));
+                windowClass.Background = GetStockObject(NullBrush);
+                windowClass.ClassName = className;
+                ushort atom = RegisterClassEx(ref windowClass);
+                if (atom == 0)
                 {
-                    return;
+                    int error = Marshal.GetLastWin32Error();
+                    // 同名类也必须拒绝，不能使用另一实例绑定的窗口回调。
+                    throw new Win32Exception(error, "RegisterClassEx 失败，Win32=" + error + "，窗口类=" + className);
                 }
-            }
-            else
-            {
                 classRegistered = true;
-            }
 
-            int style = (int)(NativeMethods.ToolWindowStyle | NativeMethods.NoActivateStyle | NativeMethods.LayeredStyle);
-            if (topmost)
+                int style = (int)(NativeMethods.ToolWindowStyle | NativeMethods.NoActivateStyle | NativeMethods.LayeredStyle);
+                if (topmost)
+                {
+                    style |= ExtendedTopmost;
+                }
+
+                windowHandle = CreateWindowEx(
+                    style,
+                    className,
+                    string.Empty,
+                    WindowPopup,
+                    left,
+                    top,
+                    1,
+                    1,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    GetModuleHandle(null),
+                    IntPtr.Zero);
+                if (windowHandle == IntPtr.Zero)
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    throw new Win32Exception(error, "CreateWindowEx 失败，Win32=" + error);
+                }
+
+                dpiScale = DisplayGeometry.ScaleForWindow(windowHandle, left, top);
+                NativeMethods.DisableTransitions(windowHandle);
+                DwmGlass.NeutralizeHover(windowHandle);
+                SetWindowTheme(windowHandle, string.Empty, string.Empty);
+            }
+            catch
             {
-                style |= ExtendedTopmost;
+                Dispose();
+                throw;
             }
-
-            windowHandle = CreateWindowEx(
-                style,
-                className,
-                string.Empty,
-                WindowPopup,
-                left,
-                top,
-                1,
-                1,
-                IntPtr.Zero,
-                IntPtr.Zero,
-                GetModuleHandle(null),
-                IntPtr.Zero);
-            if (windowHandle == IntPtr.Zero)
-            {
-                return;
-            }
-
-            dpiScale = DisplayGeometry.ScaleForWindow(windowHandle, left, top);
-            NativeMethods.DisableTransitions(windowHandle);
-            DwmGlass.NeutralizeHover(windowHandle);
-            SetWindowTheme(windowHandle, string.Empty, string.Empty);
         }
 
         // Layout uses DIPs; desktop positions always use physical pixels.
@@ -303,6 +309,9 @@ namespace FloatingClock
                 return;
             }
 
+            bool current = (NativeMethods.GetWindowLong(windowHandle, NativeMethods.ExtendedStyleIndex).ToInt64() & ExtendedTopmost) != 0;
+            if (current == topmost) return;
+
             NativeMethods.SetWindowPos(
                 windowHandle,
                 topmost ? NativeMethods.TopmostInsertAfter : NoTopmostInsertAfter,
@@ -350,7 +359,12 @@ namespace FloatingClock
 
         public void BringForward()
         {
-            NativeMethods.KeepTopmost(windowHandle);
+            if (windowHandle == IntPtr.Zero) return;
+            bool topmost = (NativeMethods.GetWindowLong(windowHandle, NativeMethods.ExtendedStyleIndex).ToInt64() & ExtendedTopmost) != 0;
+            NativeMethods.SetWindowPos(windowHandle,
+                topmost ? NativeMethods.TopmostInsertAfter : IntPtr.Zero,
+                0, 0, 0, 0,
+                NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate | NativeMethods.SwpNoRedraw);
             Repush();
         }
 

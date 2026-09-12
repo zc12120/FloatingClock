@@ -22,14 +22,19 @@ namespace FloatingClock
                 return;
             }
 
-            int square = 1;
-            DwmSetWindowAttribute(handle, CornerPreference, ref square, 4);
-            int backdrop = BackdropNone;
-            DwmSetWindowAttribute(handle, SystemBackdropType, ref backdrop, 4);
-            uint noColor = ColorNone;
-            DwmSetWindowAttributeUInt(handle, BorderColor, ref noColor, 4);
-            DwmSetWindowAttributeUInt(handle, CaptionColor, ref noColor, 4);
-            DwmSetWindowAttributeUInt(handle, TextColor, ref noColor, 4);
+            try
+            {
+                int square = 1;
+                DwmSetWindowAttribute(handle, CornerPreference, ref square, 4);
+                int backdrop = BackdropNone;
+                DwmSetWindowAttribute(handle, SystemBackdropType, ref backdrop, 4);
+                uint noColor = ColorNone;
+                DwmSetWindowAttributeUInt(handle, BorderColor, ref noColor, 4);
+                DwmSetWindowAttributeUInt(handle, CaptionColor, ref noColor, 4);
+                DwmSetWindowAttributeUInt(handle, TextColor, ref noColor, 4);
+            }
+            catch (EntryPointNotFoundException) { }
+            catch (DllNotFoundException) { }
             ApplyAccent(handle, 0, 0);
         }
 
@@ -62,9 +67,11 @@ namespace FloatingClock
                 {
                     Attribute = AccentPolicyAttribute,
                     Data = policyPointer,
-                    SizeOfData = size
+                    SizeOfData = new UIntPtr((uint)size)
                 };
-                SetWindowCompositionAttribute(handle, ref data);
+                try { SetWindowCompositionAttribute(handle, ref data); }
+                catch (EntryPointNotFoundException) { }
+                catch (DllNotFoundException) { }
             }
             finally
             {
@@ -86,7 +93,7 @@ namespace FloatingClock
         {
             public int Attribute;
             public IntPtr Data;
-            public int SizeOfData;
+            public UIntPtr SizeOfData;
         }
 
         [DllImport("user32.dll")]

@@ -10,7 +10,7 @@ namespace FloatingClock
     {
         public static Forms.Screen ScreenAt(double left, double top)
         {
-            if (double.IsNaN(left) || double.IsNaN(top)) return Forms.Screen.PrimaryScreen;
+            if (!IsValidCoordinate(left) || !IsValidCoordinate(top)) return Forms.Screen.PrimaryScreen;
             return Forms.Screen.FromPoint(new System.Drawing.Point((int)Math.Round(left), (int)Math.Round(top)));
         }
 
@@ -31,6 +31,13 @@ namespace FloatingClock
 
         public static double ScaleAt(double left, double top)
         {
+            if (!IsValidCoordinate(left) || !IsValidCoordinate(top))
+            {
+                System.Drawing.Rectangle primary = Forms.Screen.PrimaryScreen.Bounds;
+                left = primary.Left;
+                top = primary.Top;
+            }
+
             try
             {
                 NativePoint point = new NativePoint { X = (int)Math.Round(left), Y = (int)Math.Round(top) };
@@ -69,23 +76,40 @@ namespace FloatingClock
             return areas;
         }
 
+        private static bool IsValidCoordinate(double value)
+        {
+            return ClockSettings.IsValidCoordinate(value);
+        }
+
         public static Point Clamp(Rect window, Rect[] workAreas)
         {
-            Point best = window.TopLeft;
-            double bestDistance = double.MaxValue;
+            if (workAreas == null || workAreas.Length == 0)
+                throw new ArgumentException("At least one working area is required.", "workAreas");
+            if (window.IsEmpty || double.IsNaN(window.Width) || double.IsInfinity(window.Width)
+                || double.IsNaN(window.Height) || double.IsInfinity(window.Height))
+                throw new ArgumentException("Window dimensions must be finite.", "window");
+            Point best = new Point();
+            double bestDistance = double.PositiveInfinity;
+            bool found = false;
             foreach (Rect area in workAreas)
             {
-                double left = Math.Max(area.Left, Math.Min(window.Left, area.Right - window.Width));
-                double top = Math.Max(area.Top, Math.Min(window.Top, area.Bottom - window.Height));
-                double dx = left - window.Left;
-                double dy = top - window.Top;
+                if (area.IsEmpty || !IsValidCoordinate(area.Left) || !IsValidCoordinate(area.Top)
+                    || !IsValidCoordinate(area.Right) || !IsValidCoordinate(area.Bottom)) continue;
+                double sourceLeft = IsValidCoordinate(window.Left) ? window.Left : area.Left;
+                double sourceTop = IsValidCoordinate(window.Top) ? window.Top : area.Top;
+                double left = Math.Max(area.Left, Math.Min(sourceLeft, area.Right - window.Width));
+                double top = Math.Max(area.Top, Math.Min(sourceTop, area.Bottom - window.Height));
+                double dx = left - sourceLeft;
+                double dy = top - sourceTop;
                 double distance = (dx * dx) + (dy * dy);
-                if (distance < bestDistance)
+                if (!found || distance < bestDistance)
                 {
+                    found = true;
                     bestDistance = distance;
                     best = new Point(left, top);
                 }
             }
+            if (!found) throw new ArgumentException("No finite working area is available.", "workAreas");
             return best;
         }
 

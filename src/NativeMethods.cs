@@ -22,6 +22,10 @@ namespace FloatingClock
         public const uint SwpDeferErase = 0x2000;
         public const uint SwpFrameChanged = 0x0020;
         public const uint QuietMoveFlags = SwpNoSize | SwpNoActivate | SwpNoRedraw | SwpNoCopyBits | SwpNoSendChanging | SwpDeferErase;
+        public const int SettingChangeMessage = 0x001A;
+        public const int SetWorkAreaAction = 0x002F;
+        public const int DisplayChangeMessage = 0x007E;
+        public const int DpiChangedMessage = 0x02E0;
         public const int WindowPosChangingMessage = 0x0046;
         public const int StyleChangingMessage = 0x007C;
         public const int NcHitTestMessage = 0x0084;
@@ -142,8 +146,13 @@ namespace FloatingClock
                 return;
             }
 
-            int disabled = 1;
-            DwmSetWindowAttribute(handle, DwmTransitionsForcedDisabled, ref disabled, 4);
+            try
+            {
+                int disabled = 1;
+                DwmSetWindowAttribute(handle, DwmTransitionsForcedDisabled, ref disabled, 4);
+            }
+            catch (EntryPointNotFoundException) { }
+            catch (DllNotFoundException) { }
         }
 
         public static void Cloak(IntPtr handle, bool cloak)
@@ -153,8 +162,13 @@ namespace FloatingClock
                 return;
             }
 
-            int value = cloak ? 1 : 0;
-            DwmSetWindowAttribute(handle, DwmCloakAttribute, ref value, 4);
+            try
+            {
+                int value = cloak ? 1 : 0;
+                DwmSetWindowAttribute(handle, DwmCloakAttribute, ref value, 4);
+            }
+            catch (EntryPointNotFoundException) { }
+            catch (DllNotFoundException) { }
         }
 
         public static void SuppressUnchangedRedraw(IntPtr handle, IntPtr lParam)

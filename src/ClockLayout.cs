@@ -102,6 +102,16 @@ namespace FloatingClock
             // A small margin avoids firing just before the displayed unit changes.
             return TimeSpan.FromTicks(period - (now.Ticks % period) + TimeSpan.TicksPerMillisecond * 10);
         }
+
+        public static TimeSpan NextTickAfterUpdate(DateTime displayedAt, DateTime scheduledAt, bool showSeconds)
+        {
+            long period = showSeconds ? TimeSpan.TicksPerSecond : TimeSpan.TicksPerMinute;
+            // Rendering or a clock correction may cross a boundary between the two reads.
+            // Catch up promptly instead of leaving the previous minute on screen for a full minute.
+            if (displayedAt.Ticks / period != scheduledAt.Ticks / period)
+                return TimeSpan.FromMilliseconds(10);
+            return NextTick(scheduledAt, showSeconds);
+        }
     }
 
     internal static class OpacityPresets

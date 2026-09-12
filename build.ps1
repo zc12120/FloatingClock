@@ -36,19 +36,24 @@ public static class FloatingClockNativeIcon
     $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $graphics.Clear([System.Drawing.Color]::Transparent)
 
-    $faceBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 5, 16, 9))
-    $rimPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(170, 54, 217, 101)), 2
-    $tickPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(210, 36, 168, 79)), 2
-    $hourPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 76, 255, 120)), 4
-    $minutePen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 76, 255, 120)), 3
-    $centerBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 76, 255, 120))
+    $faceBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 5, 24, 69))
+    $rimPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 67, 222, 255)), 2
+    $tickPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 75, 134, 232)), 2
+    $hourPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 244, 250, 255)), 4
+    $minutePen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 67, 222, 255)), 3
+    $centerBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 244, 250, 255))
     $hourPen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
     $hourPen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
     $minutePen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
     $minutePen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
 
-    $graphics.FillEllipse($faceBrush, 3, 3, 58, 58)
-    $graphics.DrawEllipse($rimPen, 4, 4, 56, 56)
+    [System.Drawing.Point[]]$face = @(
+        [System.Drawing.Point]::new(16, 4), [System.Drawing.Point]::new(60, 4),
+        [System.Drawing.Point]::new(60, 47), [System.Drawing.Point]::new(47, 60),
+        [System.Drawing.Point]::new(4, 60), [System.Drawing.Point]::new(4, 16)
+    )
+    $graphics.FillPolygon($faceBrush, $face)
+    $graphics.DrawPolygon($rimPen, $face)
 
     for ($index = 0; $index -lt 12; $index++) {
         $angle = (($index * 30) - 90) * [Math]::PI / 180
@@ -110,7 +115,7 @@ foreach ($reference in $references) {
     }
 }
 
-& (Join-Path $projectRoot 'tests\InstallHelpers.Tests.ps1')
+& (Join-Path $projectRoot 'tests\InstallHelpers.Tests.ps1') -ReportPath (Join-Path $artifactRoot 'install-test.log')
 
 $compilerArguments = @(
     '/nologo',
@@ -128,7 +133,11 @@ $compilerArguments = @(
 $compilerArguments += $references | ForEach-Object { "/reference:$_" }
 $compilerArguments += Get-ChildItem -Path $sourceRoot -Filter '*.cs' | Sort-Object Name | Select-Object -ExpandProperty FullName
 
+$LASTEXITCODE = $null
 & $compiler $compilerArguments
+if ($null -eq $LASTEXITCODE) {
+    throw 'The compiler did not return an exit status. Run this script in Windows PowerShell, or use dotnet build FloatingClock.csproj -c Release.'
+}
 if ($LASTEXITCODE -ne 0) {
     throw "C# compiler exited with code $LASTEXITCODE"
 }

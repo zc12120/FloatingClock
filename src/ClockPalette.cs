@@ -24,6 +24,12 @@ namespace FloatingClock
             ClockPalette palette = new ClockPalette();
             ApplySurface(palette, surfaceTone);
             ApplyInk(palette, themeMode);
+            if (themeMode == 2 && surfaceTone == 2)
+            {
+                // Reload's cold white type, electric cyan details and saturated blue.
+                palette.TimeSecondary = Solid(Color.FromRgb(95, 222, 255));
+                palette.DateInk = Solid(Color.FromRgb(220, 246, 255));
+            }
             return palette;
         }
 
@@ -35,7 +41,7 @@ namespace FloatingClock
                     Tone(palette, 62, 66, 74, 34, 38, 44, 16, 18, 22, 186, 192, 202, 132, 138, 148);
                     break;
                 case 2:
-                    Tone(palette, 24, 48, 92, 10, 28, 64, 4, 14, 38, 96, 156, 255, 56, 104, 188);
+                    Tone(palette, 15, 78, 222, 5, 40, 112, 3, 15, 49, 67, 222, 255, 70, 163, 236);
                     break;
                 case 3:
                     Tone(palette, 12, 68, 78, 6, 42, 50, 3, 24, 30, 64, 214, 214, 32, 148, 156);

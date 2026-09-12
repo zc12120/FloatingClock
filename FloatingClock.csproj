@@ -12,15 +12,20 @@
     <Nullable>disable</Nullable>
     <Deterministic>true</Deterministic>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <StartupObject>FloatingClock.Program</StartupObject>
+    <Prefer32Bit>false</Prefer32Bit>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <OutputPath>artifacts\</OutputPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System.Xaml" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Compile Include="src\**\*.cs" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="fonts\*.ttf">
+    <None Update="fonts\*.ttf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
