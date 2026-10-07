@@ -15,6 +15,7 @@ namespace FloatingClock
         public Brush TimeSecondary { get; private set; }
         public Brush DateInk { get; private set; }
         public bool IsOpaque { get; private set; }
+        public bool IsSmtvv { get; private set; }
         public Brush MenuSurface { get; private set; }
         public Brush MenuForeground { get; private set; }
         public Brush MenuBorder { get; private set; }
@@ -37,6 +38,10 @@ namespace FloatingClock
         {
             switch (surfaceTone)
             {
+                case ClockLooks.SmtvvSurface:
+                    Tone(palette, 30, 82, 81, 16, 47, 54, 8, 26, 33, 48, 75, 80, 198, 174, 118);
+                    palette.IsSmtvv = true;
+                    break;
                 case 1:
                     Tone(palette, 62, 66, 74, 34, 38, 44, 16, 18, 22, 186, 192, 202, 132, 138, 148);
                     break;
@@ -127,6 +132,9 @@ namespace FloatingClock
         {
             switch (themeMode)
             {
+                case 14:
+                    Ink(palette, 248, 244, 223, 160, 221, 208, 213, 228, 215);
+                    break;
                 case 1:
                     Ink(palette, 150, 248, 176, 78, 176, 112, 112, 220, 148);
                     break;
@@ -215,6 +223,20 @@ namespace FloatingClock
             if (IsOpaque)
             {
                 return CreateOpaqueSurface();
+            }
+
+            if (IsSmtvv)
+            {
+                byte alpha = OpacityPresets.SurfaceAlpha(opacity);
+                LinearGradientBrush brush = new LinearGradientBrush
+                {
+                    StartPoint = new Point(0, 0.5), EndPoint = new Point(1, 0.5)
+                };
+                brush.GradientStops.Add(new GradientStop(WithAlpha(SurfaceTint, alpha), 0));
+                brush.GradientStops.Add(new GradientStop(WithAlpha(SurfaceSheen, alpha), 0.56));
+                brush.GradientStops.Add(new GradientStop(WithAlpha(SurfaceTint, alpha), 1));
+                brush.Freeze();
+                return brush;
             }
 
             return Solid(WithAlpha(SurfaceTint, OpacityPresets.SurfaceAlpha(opacity)));

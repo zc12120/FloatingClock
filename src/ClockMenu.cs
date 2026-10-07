@@ -13,6 +13,7 @@ namespace FloatingClock
     internal sealed class ClockMenu : IDisposable
     {
         private readonly ClockSettings settings;
+        private MenuColors Colors { get { return MenuColors.Resolve(settings); } }
         private readonly ClockWindow window;
         private readonly Func<bool> getStartup;
         private readonly Font uiFont = new Font("Microsoft YaHei UI", 9.5F);
@@ -42,9 +43,9 @@ namespace FloatingClock
                 MinimumSize = new Size(332, 0),
                 ShowImageMargin = true,
                 ShowCheckMargin = false,
-                BackColor = MenuColors.Midnight,
-                ForeColor = MenuColors.Text,
-                Renderer = new ClockMenuRenderer(fonts),
+                BackColor = Colors.Midnight,
+                ForeColor = Colors.Text,
+                Renderer = new ClockMenuRenderer(settings, fonts),
                 ShowItemToolTips = true
             };
             header = new ClockMenuHeader(settings, window, fonts);
@@ -81,9 +82,13 @@ namespace FloatingClock
             for (int i = 0; i < surfaceOptions.Length; i++)
             {
                 surfaceOptions[i].Image = Swatch(ToColor(ClockPalette.Create(0, i).SurfaceTint));
-                surfaceOptions[i].ShortcutKeyDisplayString = i < ClockLooks.TransparentSurfaceCount ? "透明" : "实色";
+                surfaceOptions[i].ShortcutKeyDisplayString = ClockLooks.IsOpaqueSurface(i) ? "实色" : "透明";
             }
-            surface.DropDownItems.Insert(ClockLooks.TransparentSurfaceCount, new Forms.ToolStripSeparator());
+            // Keep stored color indices stable while grouping the appended jade
+            // surface with the other transparent choices in the menu.
+            surface.DropDownItems.Remove(surfaceOptions[ClockLooks.SmtvvSurface]);
+            surface.DropDownItems.Insert(ClockLooks.TransparentSurfaceCount, surfaceOptions[ClockLooks.SmtvvSurface]);
+            surface.DropDownItems.Insert(ClockLooks.TransparentSurfaceCount + 1, new Forms.ToolStripSeparator());
             font = Branch("font", "数字字体");
             fontOptions = Options(font, ClockLooks.FontNames, window.SetFontMode);
             for (int i = 0; i < fontOptions.Length; i++)
@@ -127,7 +132,7 @@ namespace FloatingClock
             exitItem.Tag = new MenuItemInfo { Destructive = true };
             Menu.Items.Add(exitItem);
             Menu.Items.Add(new Forms.ToolStripSeparator());
-            ClockMenuFooter footer = new ClockMenuFooter();
+            ClockMenuFooter footer = new ClockMenuFooter(settings);
             Menu.Items.Add(new Forms.ToolStripControlHost(footer)
             {
                 AutoSize = false,
@@ -205,7 +210,7 @@ namespace FloatingClock
             {
                 Name = name,
                 Font = uiFont,
-                ForeColor = MenuColors.Text,
+                ForeColor = Colors.Text,
                 Padding = new Forms.Padding(6, 6, 10, 6),
                 Tag = new MenuItemInfo()
             };
@@ -213,8 +218,8 @@ namespace FloatingClock
 
         private void WireDropDown(Forms.ToolStripDropDown dropDown)
         {
-            dropDown.BackColor = MenuColors.Midnight;
-            dropDown.ForeColor = MenuColors.Text;
+            dropDown.BackColor = Colors.Midnight;
+            dropDown.ForeColor = Colors.Text;
             dropDown.Font = uiFont;
             dropDown.Padding = new Forms.Padding(6);
             dropDown.Renderer = Menu.Renderer;
@@ -240,6 +245,7 @@ namespace FloatingClock
         public void RefreshState()
         {
             if (disposed) return;
+            ApplyColors(Menu, Colors);
             date.Checked = settings.ShowDate;
             seconds.Checked = settings.ShowSeconds;
             hour24.Checked = settings.Use24Hour;
@@ -278,6 +284,27 @@ namespace FloatingClock
             header.Invalidate();
         }
 
+        private static void ApplyColors(Forms.ToolStripDropDown dropDown, MenuColors colors)
+        {
+            dropDown.BackColor = colors.Midnight;
+            dropDown.ForeColor = colors.Text;
+            foreach (Forms.ToolStripItem entry in dropDown.Items)
+            {
+                entry.BackColor = colors.Midnight;
+                entry.ForeColor = colors.Text;
+                Forms.ToolStripControlHost host = entry as Forms.ToolStripControlHost;
+                if (host != null)
+                {
+                    host.Control.BackColor = colors.Midnight;
+                    host.Control.ForeColor = colors.Text;
+                    host.Control.Invalidate();
+                }
+                Forms.ToolStripMenuItem item = entry as Forms.ToolStripMenuItem;
+                if (item != null && item.HasDropDownItems) ApplyColors(item.DropDown, colors);
+            }
+            dropDown.Invalidate(true);
+        }
+
         private static void Exclusive(Forms.ToolStripMenuItem[] items, int selected)
         {
             for (int i = 0; i < items.Length; i++) items[i].Checked = i == selected;
@@ -305,13 +332,28 @@ namespace FloatingClock
             using (Graphics graphics = Graphics.FromImage(bitmap))
             using (SolidBrush surfaceBrush = new SolidBrush(ToColor(palette.SurfaceTint)))
             using (SolidBrush inkBrush = new SolidBrush(ToColor(((Media.SolidColorBrush)palette.TimeInk).Color)))
-            using (Pen border = new Pen(MenuColors.Cyan))
+            using (Pen border = new Pen(palette.IsSmtvv ? Color.FromArgb(219, 195, 140) : Color.FromArgb(67, 222, 255)))
             {
                 graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                Point[] shape = { new Point(5, 2), new Point(15, 2), new Point(11, 14), new Point(1, 14) };
-                graphics.FillPolygon(surfaceBrush, shape);
-                graphics.FillPolygon(inkBrush, new[] { new Point(10, 2), new Point(15, 2), new Point(11, 14), new Point(6, 14) });
-                graphics.DrawPolygon(border, shape);
+                if (palette.IsSmtvv)
+                {
+                    using (GraphicsPath shape = ClockMenuRenderer.RoundedRectangle(new RectangleF(2, 2, 12, 12), 3))
+                    {
+                        graphics.FillPath(surfaceBrush, shape);
+                        GraphicsState clipped = graphics.Save();
+                        graphics.SetClip(shape);
+                        graphics.FillRectangle(inkBrush, 8, 2, 6, 12);
+                        graphics.Restore(clipped);
+                        graphics.DrawPath(border, shape);
+                    }
+                }
+                else
+                {
+                    Point[] shape = { new Point(5, 2), new Point(15, 2), new Point(11, 14), new Point(1, 14) };
+                    graphics.FillPolygon(surfaceBrush, shape);
+                    graphics.FillPolygon(inkBrush, new[] { new Point(10, 2), new Point(15, 2), new Point(11, 14), new Point(6, 14) });
+                    graphics.DrawPolygon(border, shape);
+                }
             }
             images.Add(bitmap);
             return bitmap;
@@ -346,27 +388,50 @@ namespace FloatingClock
         public int Ordinal;
     }
 
-    internal static class MenuColors
+    internal sealed class MenuColors
     {
-        public static readonly Color Midnight = Color.FromArgb(5, 18, 46);
-        public static readonly Color Blue = Color.FromArgb(15, 78, 222);
-        public static readonly Color Line = Color.FromArgb(23, 62, 112);
-        public static readonly Color Text = Color.FromArgb(244, 250, 255);
-        public static readonly Color Secondary = Color.FromArgb(132, 199, 231);
-        public static readonly Color Muted = Color.FromArgb(104, 132, 165);
-        public static readonly Color Cyan = Color.FromArgb(67, 222, 255);
-        public static readonly Color Caution = Color.FromArgb(255, 167, 176);
-        public static readonly Color SelectionText = Color.FromArgb(7, 34, 81);
+        private static readonly MenuColors Reload = new MenuColors(false,
+            Color.FromArgb(5, 18, 46), Color.FromArgb(15, 78, 222), Color.FromArgb(23, 62, 112),
+            Color.FromArgb(244, 250, 255), Color.FromArgb(132, 199, 231), Color.FromArgb(104, 132, 165),
+            Color.FromArgb(67, 222, 255), Color.FromArgb(255, 167, 176), Color.FromArgb(7, 34, 81));
+        private static readonly MenuColors Smtvv = new MenuColors(true,
+            Color.FromArgb(8, 26, 33), Color.FromArgb(25, 51, 58), Color.FromArgb(48, 75, 80),
+            Color.FromArgb(231, 239, 234), Color.FromArgb(160, 221, 208), Color.FromArgb(125, 151, 151),
+            Color.FromArgb(219, 195, 140), Color.FromArgb(237, 161, 150), Color.FromArgb(248, 244, 223));
+
+        public readonly bool IsSmtvv;
+        public readonly Color Midnight, Blue, Line, Text, Secondary, Muted, Cyan, Caution, SelectionText;
+
+        private MenuColors(bool isSmtvv, Color midnight, Color blue, Color line, Color text,
+            Color secondary, Color muted, Color cyan, Color caution, Color selectionText)
+        {
+            IsSmtvv = isSmtvv;
+            Midnight = midnight; Blue = blue; Line = line; Text = text;
+            Secondary = secondary; Muted = muted; Cyan = cyan; Caution = caution; SelectionText = selectionText;
+        }
+
+        public static MenuColors Resolve(ClockSettings settings)
+        {
+            return ClockLooks.IsSmtvvSurface(settings.SurfaceTone) ? Smtvv : Reload;
+        }
     }
 
     internal sealed class ClockMenuRenderer : Forms.ToolStripProfessionalRenderer
     {
         private readonly MenuFonts fonts;
-        public ClockMenuRenderer(MenuFonts fonts) { this.fonts = fonts; RoundedEdges = false; }
+        private readonly ClockSettings settings;
+        private MenuColors Colors { get { return MenuColors.Resolve(settings); } }
+        public ClockMenuRenderer(ClockSettings settings, MenuFonts fonts)
+        {
+            this.settings = settings;
+            this.fonts = fonts;
+            RoundedEdges = false;
+        }
 
         protected override void OnRenderToolStripBackground(Forms.ToolStripRenderEventArgs e)
         {
-            e.Graphics.Clear(MenuColors.Midnight);
+            e.Graphics.Clear(Colors.Midnight);
+            if (Colors.IsSmtvv) return;
             int w = e.ToolStrip.Width, h = e.ToolStrip.Height;
             using (SolidBrush wing = new SolidBrush(Color.FromArgb(8, 28, 65)))
                 e.Graphics.FillPolygon(wing, new[] { new Point(w, h / 3), new Point(w, h), new Point(w - 70, h) });
@@ -374,9 +439,10 @@ namespace FloatingClock
 
         protected override void OnRenderToolStripBorder(Forms.ToolStripRenderEventArgs e)
         {
-            using (Pen pen = new Pen(MenuColors.Line)) e.Graphics.DrawRectangle(pen, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
-            using (Pen pen = new Pen(MenuColors.Cyan, 2)) e.Graphics.DrawLine(pen, 1, 1, e.ToolStrip.Width * .48F, 1);
-            using (Pen pen = new Pen(MenuColors.Blue, 2)) e.Graphics.DrawLine(pen, e.ToolStrip.Width * .48F, 1, e.ToolStrip.Width - 2, 1);
+            using (Pen pen = new Pen(Colors.Line)) e.Graphics.DrawRectangle(pen, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
+            if (Colors.IsSmtvv) return;
+            using (Pen pen = new Pen(Colors.Cyan, 2)) e.Graphics.DrawLine(pen, 1, 1, e.ToolStrip.Width * .48F, 1);
+            using (Pen pen = new Pen(Colors.Blue, 2)) e.Graphics.DrawLine(pen, e.ToolStrip.Width * .48F, 1, e.ToolStrip.Width - 2, 1);
         }
 
         protected override void OnRenderImageMargin(Forms.ToolStripRenderEventArgs e) { }
@@ -387,20 +453,32 @@ namespace FloatingClock
             int w = e.Item.Width, h = e.Item.Height;
             int cut = Logical(e.Item, 9);
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            if (selected)
+            if (selected && Colors.IsSmtvv)
             {
-                using (SolidBrush brush = new SolidBrush(MenuColors.Text))
+                using (GraphicsPath path = RoundedRectangle(new RectangleF(1, 1, w - 3, h - 3), Logical(e.Item, 5)))
+                using (SolidBrush brush = new SolidBrush(Colors.Blue))
+                using (Pen border = new Pen(Colors.Line))
+                using (Pen accent = new Pen(Colors.Cyan, 2))
+                {
+                    e.Graphics.FillPath(brush, path);
+                    e.Graphics.DrawPath(border, path);
+                    e.Graphics.DrawLine(accent, 3, Logical(e.Item, 8), 3, h - Logical(e.Item, 8));
+                }
+            }
+            else if (selected)
+            {
+                using (SolidBrush brush = new SolidBrush(Colors.Text))
                     e.Graphics.FillPolygon(brush, new[] { new Point(cut, 1), new Point(w - 1, 1), new Point(w - cut - 1, h - 1), new Point(0, h - 1) });
-                using (SolidBrush brush = new SolidBrush(MenuColors.Cyan))
+                using (SolidBrush brush = new SolidBrush(Colors.Cyan))
                     e.Graphics.FillPolygon(brush, new[] { new Point(w - Logical(e.Item, 15), 1), new Point(w - 1, 1), new Point(w - cut - 1, h - 1), new Point(w - Logical(e.Item, 24), h - 1) });
             }
             MenuItemInfo info = e.Item.Tag as MenuItemInfo;
             Forms.ToolStripMenuItem item = e.Item as Forms.ToolStripMenuItem;
             if (info != null && info.Ordinal > 0 && e.Item.Image == null && (item == null || !item.Checked))
             {
-                using (SolidBrush brush = new SolidBrush(selected ? MenuColors.Blue : MenuColors.Secondary))
+                using (SolidBrush brush = new SolidBrush(selected ? (Colors.IsSmtvv ? Colors.Cyan : Colors.Blue) : Colors.Secondary))
                 using (StringFormat format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-                    e.Graphics.DrawString(info.Ordinal.ToString("00"), fonts.Sample(4), brush, new Rectangle(0, 0, Logical(e.Item, 24), h), format);
+                    e.Graphics.DrawString(info.Ordinal.ToString("00"), fonts.Sample(Colors.IsSmtvv ? 8 : 4), brush, new Rectangle(0, 0, Logical(e.Item, 24), h), format);
             }
         }
 
@@ -409,8 +487,8 @@ namespace FloatingClock
             Forms.ToolStripMenuItem item = e.Item as Forms.ToolStripMenuItem;
             MenuItemInfo info = e.Item.Tag as MenuItemInfo;
             bool detail = item != null && e.Text == item.ShortcutKeyDisplayString;
-            e.TextColor = !e.Item.Enabled ? MenuColors.Muted : e.Item.Selected ? MenuColors.SelectionText : detail ? MenuColors.Secondary
-                : info != null && info.Destructive ? MenuColors.Caution : MenuColors.Text;
+            e.TextColor = !e.Item.Enabled ? Colors.Muted : e.Item.Selected ? Colors.SelectionText : detail ? Colors.Secondary
+                : info != null && info.Destructive ? Colors.Caution : Colors.Text;
             if (detail && info != null && info.FontSample >= 0)
             {
                 using (SolidBrush brush = new SolidBrush(e.TextColor))
@@ -425,7 +503,7 @@ namespace FloatingClock
             {
                 Forms.TextRenderer.DrawText(e.Graphics, item.ShortcutKeyDisplayString, e.TextFont,
                     new Rectangle(e.Item.Width - Logical(e.Item, 166), e.TextRectangle.Y, Logical(e.Item, 124), e.TextRectangle.Height),
-                    !item.Enabled ? MenuColors.Muted : item.Selected ? MenuColors.SelectionText : MenuColors.Secondary,
+                    !item.Enabled ? Colors.Muted : item.Selected ? Colors.SelectionText : Colors.Secondary,
                     Forms.TextFormatFlags.Right | Forms.TextFormatFlags.VerticalCenter | Forms.TextFormatFlags.EndEllipsis | Forms.TextFormatFlags.NoPadding);
             }
         }
@@ -437,7 +515,7 @@ namespace FloatingClock
             Forms.ToolStripMenuItem item = e.Item as Forms.ToolStripMenuItem;
             if (item != null && item.Checked)
             {
-                using (Pen pen = new Pen(item.Selected ? MenuColors.SelectionText : MenuColors.Cyan, 1.4F))
+                using (Pen pen = new Pen(item.Selected ? Colors.SelectionText : Colors.Cyan, 1.4F))
                 {
                     e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
                     Rectangle rect = e.ImageRectangle;
@@ -448,14 +526,14 @@ namespace FloatingClock
 
         protected override void OnRenderArrow(Forms.ToolStripArrowRenderEventArgs e)
         {
-            e.ArrowColor = !e.Item.Enabled ? MenuColors.Muted : e.Item.Selected ? MenuColors.SelectionText : MenuColors.Cyan;
+            e.ArrowColor = !e.Item.Enabled ? Colors.Muted : e.Item.Selected ? Colors.SelectionText : Colors.Cyan;
             base.OnRenderArrow(e);
         }
 
         protected override void OnRenderItemCheck(Forms.ToolStripItemImageRenderEventArgs e)
         {
             Rectangle rect = e.ImageRectangle;
-            using (Pen pen = new Pen(e.Item.Selected ? MenuColors.SelectionText : MenuColors.Cyan, 1.8F))
+            using (Pen pen = new Pen(e.Item.Selected ? Colors.SelectionText : Colors.Cyan, 1.8F))
             {
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
                 e.Graphics.DrawLines(pen, new[] {
@@ -467,8 +545,21 @@ namespace FloatingClock
 
         protected override void OnRenderSeparator(Forms.ToolStripSeparatorRenderEventArgs e)
         {
-            using (Pen pen = new Pen(MenuColors.Line)) e.Graphics.DrawLine(pen, 8, e.Item.Height / 2, e.Item.Width - 8, e.Item.Height / 2);
-            using (Pen pen = new Pen(MenuColors.Blue, 2)) e.Graphics.DrawLine(pen, 8, e.Item.Height / 2, 30, e.Item.Height / 2);
+            using (Pen pen = new Pen(Colors.Line)) e.Graphics.DrawLine(pen, 8, e.Item.Height / 2, e.Item.Width - 8, e.Item.Height / 2);
+            if (!Colors.IsSmtvv)
+                using (Pen pen = new Pen(Colors.Blue, 2)) e.Graphics.DrawLine(pen, 8, e.Item.Height / 2, 30, e.Item.Height / 2);
+        }
+
+        internal static GraphicsPath RoundedRectangle(RectangleF rectangle, float radius)
+        {
+            GraphicsPath path = new GraphicsPath();
+            float diameter = Math.Min(radius * 2, Math.Min(rectangle.Width, rectangle.Height));
+            path.AddArc(rectangle.Left, rectangle.Top, diameter, diameter, 180, 90);
+            path.AddArc(rectangle.Right - diameter, rectangle.Top, diameter, diameter, 270, 90);
+            path.AddArc(rectangle.Right - diameter, rectangle.Bottom - diameter, diameter, diameter, 0, 90);
+            path.AddArc(rectangle.Left, rectangle.Bottom - diameter, diameter, diameter, 90, 90);
+            path.CloseFigure();
+            return path;
         }
 
         private static int Logical(Forms.ToolStripItem item, int pixels)
@@ -480,12 +571,16 @@ namespace FloatingClock
     internal sealed class ClockMenuHeader : Forms.Control
     {
         private readonly ClockSettings settings;
+        private MenuColors Colors { get { return MenuColors.Resolve(settings); } }
         private readonly ClockWindow window;
         private readonly Font caption = new Font("Microsoft YaHei UI", 11F, FontStyle.Regular, GraphicsUnit.Pixel);
         private readonly Font title;
         private readonly Font numbers;
         private readonly Font edition;
         private readonly Font latin;
+        private readonly Font smtvvTitle;
+        private readonly Font smtvvNumbers;
+        private readonly Font smtvvLatin;
 
         public ClockMenuHeader(ClockSettings settings, ClockWindow window, MenuFonts fonts)
         {
@@ -495,8 +590,11 @@ namespace FloatingClock
             numbers = fonts.Display(23F);
             edition = fonts.Display(96F);
             latin = fonts.Display(11F);
+            smtvvTitle = fonts.SmtvvTitle(35F);
+            smtvvNumbers = fonts.SmtvvDisplay(23F);
+            smtvvLatin = fonts.SmtvvDisplay(11F);
             Size = new Size(316, 130);
-            BackColor = MenuColors.Midnight;
+            BackColor = Colors.Midnight;
             SetStyle(Forms.ControlStyles.UserPaint | Forms.ControlStyles.AllPaintingInWmPaint | Forms.ControlStyles.OptimizedDoubleBuffer, true);
             TabStop = false;
             AccessibleName = "悬浮时钟状态";
@@ -510,11 +608,17 @@ namespace FloatingClock
             g.ScaleTransform(Width / 316F, Height / 130F);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-            using (SolidBrush blue = new SolidBrush(MenuColors.Blue))
+            if (Colors.IsSmtvv)
+            {
+                PaintSmtvv(g);
+                g.Restore(saved);
+                return;
+            }
+            using (SolidBrush blue = new SolidBrush(Colors.Blue))
             using (SolidBrush cobalt = new SolidBrush(Color.FromArgb(10, 54, 157)))
-            using (SolidBrush cyan = new SolidBrush(MenuColors.Cyan))
-            using (SolidBrush white = new SolidBrush(MenuColors.Text))
-            using (SolidBrush muted = new SolidBrush(MenuColors.Secondary))
+            using (SolidBrush cyan = new SolidBrush(Colors.Cyan))
+            using (SolidBrush white = new SolidBrush(Colors.Text))
+            using (SolidBrush muted = new SolidBrush(Colors.Secondary))
             using (SolidBrush numeral = new SolidBrush(Color.FromArgb(36, 111, 235)))
             {
                 g.FillPolygon(cobalt, new[] { new Point(15, 0), new Point(316, 0), new Point(316, 84), new Point(0, 99) });
@@ -545,21 +649,71 @@ namespace FloatingClock
             g.Restore(saved);
         }
 
+        private void PaintSmtvv(Graphics g)
+        {
+            MenuColors colors = Colors;
+            using (GraphicsPath hero = ClockMenuRenderer.RoundedRectangle(new RectangleF(.5F, .5F, 315, 97), 8))
+            using (LinearGradientBrush fill = new LinearGradientBrush(new Rectangle(0, 0, 316, 98),
+                Color.FromArgb(16, 47, 54), Color.FromArgb(16, 47, 54), 0F))
+            using (Pen border = new Pen(colors.Line))
+            using (SolidBrush ivory = new SolidBrush(colors.SelectionText))
+            using (SolidBrush jade = new SolidBrush(colors.Secondary))
+            using (SolidBrush gold = new SolidBrush(colors.Cyan))
+            {
+                fill.InterpolationColors = new ColorBlend
+                {
+                    Colors = new[] { Color.FromArgb(16, 47, 54), Color.FromArgb(30, 82, 81), Color.FromArgb(16, 47, 54) },
+                    Positions = new[] { 0F, .5F, 1F }
+                };
+                g.FillPath(fill, hero);
+                GraphicsState clipped = g.Save();
+                g.SetClip(hero);
+                using (Pen ring = new Pen(Color.FromArgb(34, colors.Cyan)))
+                {
+                    foreach (float radius in new[] { 28F, 44F, 60F, 76F })
+                        g.DrawEllipse(ring, 272 - radius, 45 - radius, radius * 2, radius * 2);
+                }
+                g.Restore(clipped);
+                g.DrawPath(border, hero);
+                g.DrawString("F L O A T I N G   C L O C K", smtvvLatin, jade, new PointF(16, 11));
+                g.DrawString("SMTVV", smtvvTitle, ivory, new PointF(14, 28));
+                g.DrawString("显示设置 · 玉金主题", caption, gold, new PointF(16, 76));
+
+                DateTime now = DateTime.Now;
+                string time = ClockFormatter.Hour(now, settings.Use24Hour) + ":" + ClockFormatter.Minute(now);
+                string state = !window.CanSaveSettings ? "临时设置 · 不保存"
+                    : !window.IsVisible ? "已隐藏" : settings.ClickThrough ? "鼠标穿透中" : settings.Locked ? "位置已锁定" : "可拖动";
+                g.DrawString(time, smtvvNumbers, ivory, new PointF(12, 103));
+                string date = now.ToString("MM.dd", System.Globalization.CultureInfo.InvariantCulture);
+                if (!settings.Use24Hour) date += "  " + ClockFormatter.Period(now, false);
+                g.DrawString(date, smtvvLatin, jade, new PointF(85, 113));
+                using (StringFormat right = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center })
+                    g.DrawString(state, caption, jade, new RectangleF(156, 105, 145, 23), right);
+            }
+        }
+
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { caption.Dispose(); title.Dispose(); numbers.Dispose(); edition.Dispose(); latin.Dispose(); }
+            if (disposing)
+            {
+                caption.Dispose(); title.Dispose(); numbers.Dispose(); edition.Dispose(); latin.Dispose();
+                smtvvTitle.Dispose(); smtvvNumbers.Dispose(); smtvvLatin.Dispose();
+            }
             base.Dispose(disposing);
         }
     }
 
     internal sealed class ClockMenuFooter : Forms.Control
     {
+        private readonly ClockSettings settings;
+        private MenuColors Colors { get { return MenuColors.Resolve(settings); } }
         private readonly Font caption = new Font("Microsoft YaHei UI", 8F);
 
-        public ClockMenuFooter()
+        public ClockMenuFooter(ClockSettings settings)
         {
+            this.settings = settings;
             Size = new Size(316, 24);
-            BackColor = MenuColors.Midnight;
+            BackColor = Colors.Midnight;
             TabStop = false;
             AccessibleName = "方向键选择，右方向键展开，Enter 应用，Esc 关闭";
             SetStyle(Forms.ControlStyles.UserPaint | Forms.ControlStyles.AllPaintingInWmPaint | Forms.ControlStyles.OptimizedDoubleBuffer, true);
@@ -569,7 +723,7 @@ namespace FloatingClock
         {
             base.OnPaint(e);
             Forms.TextRenderer.DrawText(e.Graphics, "↑↓ 选择    → 展开    Enter 应用    Esc 关闭", caption,
-                new Rectangle(10, 1, Width - 20, Height - 2), MenuColors.Secondary,
+                new Rectangle(10, 1, Width - 20, Height - 2), Colors.Secondary,
                 Forms.TextFormatFlags.VerticalCenter | Forms.TextFormatFlags.NoPadding | Forms.TextFormatFlags.EndEllipsis);
         }
 
@@ -583,7 +737,7 @@ namespace FloatingClock
     internal sealed class MenuFonts : IDisposable
     {
         private readonly PrivateFontCollection collection = new PrivateFontCollection();
-        private readonly Font[] samples = new Font[8];
+        private readonly Font[] samples = new Font[ClockLooks.FontNames.Length];
         private FontFamily[] families;
         private bool loaded;
 
@@ -591,9 +745,9 @@ namespace FloatingClock
         {
             if (loaded) return;
             loaded = true;
-            string[] files = { "Oxanium-SemiBold.ttf", "Orbitron-SemiBold.ttf", "ShareTechMono-Regular.ttf", "Exo2-SemiBold.ttf", "Rajdhani-SemiBold.ttf", "Audiowide-Regular.ttf", "Iceland-Regular.ttf", "Electrolize-Regular.ttf" };
+            string[] files = { "Oxanium-SemiBold.ttf", "Orbitron-SemiBold.ttf", "ShareTechMono-Regular.ttf", "Exo2-SemiBold.ttf", "Rajdhani-SemiBold.ttf", "Audiowide-Regular.ttf", "Iceland-Regular.ttf", "Electrolize-Regular.ttf", "Barlow-Medium.ttf", "Cinzel-Bold.ttf" };
             bool hasBahnschrift = ClockTypography.InstalledFamily("Bahnschrift") != null;
-            string[] names = { "Oxanium", "Orbitron", "Share Tech Mono", hasBahnschrift ? "Bahnschrift" : "Exo 2", "Rajdhani", "Audiowide", "Iceland", "Electrolize" };
+            string[] names = { "Oxanium", "Orbitron", "Share Tech Mono", hasBahnschrift ? "Bahnschrift" : "Exo 2", "Rajdhani", "Audiowide", "Iceland", "Electrolize", "Barlow" };
             for (int i = 0; i < files.Length; i++)
             {
                 string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, files[i]);
@@ -616,13 +770,13 @@ namespace FloatingClock
             {
                 foreach (FontFamily family in families)
                 {
-                    if (family.Name.StartsWith(names[i], StringComparison.OrdinalIgnoreCase))
+                    if (i < names.Length && family.Name.StartsWith(names[i], StringComparison.OrdinalIgnoreCase))
                     {
                         samples[i] = new Font(family, 11F, family.IsStyleAvailable(FontStyle.Regular) ? FontStyle.Regular : FontStyle.Bold);
                         break;
                     }
                 }
-                if (samples[i] == null) samples[i] = new Font(i == 3 ? "Bahnschrift" : "Consolas", 11F);
+                if (samples[i] == null) samples[i] = new Font(i == 3 ? "Bahnschrift" : i == 8 ? "Segoe UI" : "Consolas", 11F);
             }
         }
         public Font Sample(int index)
@@ -633,6 +787,21 @@ namespace FloatingClock
         public Font Display(float pixels)
         {
             return new Font(Sample(4).FontFamily, pixels, FontStyle.Regular, GraphicsUnit.Pixel);
+        }
+        public Font SmtvvDisplay(float pixels)
+        {
+            Font sample = Sample(8);
+            return new Font(sample.FontFamily, pixels, sample.Style, GraphicsUnit.Pixel);
+        }
+        public Font SmtvvTitle(float pixels)
+        {
+            Load();
+            foreach (FontFamily family in families)
+            {
+                if (family.Name.StartsWith("Cinzel", StringComparison.OrdinalIgnoreCase))
+                    return new Font(family, pixels, family.IsStyleAvailable(FontStyle.Bold) ? FontStyle.Bold : FontStyle.Regular, GraphicsUnit.Pixel);
+            }
+            return new Font("Georgia", pixels, FontStyle.Bold, GraphicsUnit.Pixel);
         }
         public void Dispose()
         {

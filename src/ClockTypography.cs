@@ -24,10 +24,12 @@ namespace FloatingClock
             "银辉",
             "墨黑",
             "石板",
-            "藏青字"
+            "藏青字",
+            "象牙白"
         };
 
         public const int TransparentSurfaceCount = 12;
+        public const int SmtvvSurface = 20;
 
         public static readonly string[] SurfaceNames =
         {
@@ -50,13 +52,16 @@ namespace FloatingClock
             "浅杏",
             "薄荷绿",
             "淡紫",
-            "珍珠白"
+            "珍珠白",
+            "玉青"
         };
 
         public static bool IsOpaqueSurface(int surfaceTone)
         {
-            return surfaceTone >= TransparentSurfaceCount;
+            return surfaceTone >= TransparentSurfaceCount && surfaceTone < SmtvvSurface;
         }
+
+        public static bool IsSmtvvSurface(int surfaceTone) { return surfaceTone == SmtvvSurface; }
 
         public static readonly string[] FontNames =
         {
@@ -67,7 +72,8 @@ namespace FloatingClock
             "仪表",
             "霓虹",
             "冰岛",
-            "电刻"
+            "电刻",
+            "图鉴"
         };
 
         public static readonly string[] ScaleNames =
@@ -90,6 +96,14 @@ namespace FloatingClock
         public const double PeriodSize = 11.0;
 
         private static readonly FontFamily[] CachedFamilies = new FontFamily[ClockLooks.FontNames.Length];
+        private static FontFamily smtvvHeading;
+
+        public static FontFamily SmtvvHeading()
+        {
+            if (smtvvHeading == null)
+                smtvvHeading = FileFamily("Cinzel-Bold.ttf", "Cinzel") ?? new FontFamily("Georgia");
+            return smtvvHeading;
+        }
 
         public static FontFamily Create(int fontMode)
         {
@@ -107,6 +121,10 @@ namespace FloatingClock
         {
             switch (fontMode)
             {
+                case 8:
+                    return FirstAvailable(
+                        FileFamily("Barlow-Medium.ttf", "Barlow"),
+                        new FontFamily("Segoe UI, Bahnschrift, Consolas"));
                 case 1:
                     return FirstAvailable(
                         FileFamily("Orbitron-SemiBold.ttf", "Orbitron"),
@@ -163,7 +181,7 @@ namespace FloatingClock
 
         public static FontWeight TimeWeight(int fontMode)
         {
-            return (fontMode == 2 || fontMode == 6 || fontMode == 7)
+            return (fontMode == 2 || fontMode == 6 || fontMode == 7 || fontMode == 8)
                 ? FontWeights.Medium
                 : FontWeights.SemiBold;
         }
@@ -214,8 +232,14 @@ namespace FloatingClock
 
         private static FontFamily FileFamily(string fileName, string familyName)
         {
+            // Preview tooling loads this assembly inside PowerShell, whose base
+            // directory is not the clock's directory. Prefer the packaged fonts.
+            string assemblyRoot = Path.GetDirectoryName(typeof(ClockTypography).Assembly.Location);
             string[] roots =
             {
+                assemblyRoot,
+                Path.Combine(assemblyRoot, "fonts"),
+                Path.GetFullPath(Path.Combine(assemblyRoot, "..", "fonts")),
                 AppDomain.CurrentDomain.BaseDirectory,
                 Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "fonts"),
                 SettingsStore.FolderPath,

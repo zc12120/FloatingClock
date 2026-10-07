@@ -19,11 +19,13 @@ $static = [Reflection.BindingFlags]'Static,Public,NonPublic'
 $settingsType = $assembly.GetType('FloatingClock.ClockSettings', $true)
 $windowType = $assembly.GetType('FloatingClock.ClockWindow', $true)
 $presetType = $assembly.GetType('FloatingClock.ClockThemePresets', $true)
+$sampleTime = [DateTime]::new(2026, 10, 7, 21, 48, 36)
 [void][IO.Directory]::CreateDirectory($OutputDirectory)
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 
 function Save-Clock {
     param($Window, [string]$Name, [double]$Dpi = 192)
+    [void]$windowType.GetMethod('UpdateClock', $members).Invoke($Window, [object[]]@($sampleTime, $true))
     $visual = $windowType.GetField('scaler', $members).GetValue($Window)
     $size = [System.Windows.Size]::new($Window.Width, $Window.Height)
     $visual.Measure($size)
@@ -74,16 +76,22 @@ $arguments = [object[]]@($settings, [Action]{}, [Action[bool]]{ param($value) },
     [Func[bool]]{ return $false }, [Action[bool]]{ param($value) }, [Action]{}, [Action]{})
 $window = [Activator]::CreateInstance($windowType, $arguments)
 try {
-    $names = @('reload', 'dark-hour', 'moonlight')
-    for ($index = 0; $index -lt 3; $index++) {
+    $names = @('reload', 'dark-hour', 'moonlight', 'smtvv')
+    for ($index = 0; $index -lt $names.Count; $index++) {
         $window.SetThemePreset($index)
         Save-Clock -Window $window -Name ('clock-' + $names[$index] + '.png')
     }
+    Save-Clock -Window $window -Name 'clock-smtvv-100.png' -Dpi 96
+    Save-Clock -Window $window -Name 'clock-smtvv-150.png' -Dpi 144
+    $menu = $window.SettingsMenu
+    $theme = $menu.Items.Find('theme', $true)[0]
+    $theme.Select()
+    Save-Menu -Menu $menu -Name 'menu-smtvv.png'
+    $theme.DropDownItems[3].Select()
+    Save-Menu -Menu $theme.DropDown -Name 'menu-smtvv-themes.png'
     $window.SetThemePreset(0)
     Save-Clock -Window $window -Name 'clock-100.png' -Dpi 96
     Save-Clock -Window $window -Name 'clock-150.png' -Dpi 144
-    $menu = $window.SettingsMenu
-    $theme = $menu.Items.Find('theme', $true)[0]
     $theme.Select()
     Save-Menu -Menu $menu -Name 'menu-main.png'
     $theme.DropDownItems[1].Select()
@@ -99,6 +107,12 @@ try {
     Save-Clock -Window $window -Name 'clock-wide-font.png'
     $window.SetThemePreset(2)
     Save-Menu -Menu $menu -Name 'menu-moonlight.png'
+    $window.SetThemePreset(3)
+    Save-Clock -Window $window -Name 'clock-smtvv-compact-12h.png'
+    $window.SetScaleMode(0)
+    Save-Clock -Window $window -Name 'clock-smtvv-mini-12h.png' -Dpi 96
+    $window.SetScaleMode(5)
+    Save-Clock -Window $window -Name 'clock-smtvv-large-12h.png'
     Write-Host "Preview images: $OutputDirectory"
 }
 finally {

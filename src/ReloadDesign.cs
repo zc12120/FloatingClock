@@ -9,21 +9,23 @@ namespace FloatingClock
     // preferences survive a theme change and older settings need no migration.
     internal static class ClockThemePresets
     {
-        public static readonly string[] Names = { "Reload 蓝", "深夜青", "月光白" };
-        public static readonly string[] Captions = { "RELOAD", "DARK HOUR", "MOONLIGHT" };
+        public static readonly string[] Names = { "Reload 蓝", "深夜青", "月光白", "SMTVV 玉金" };
+        public static readonly string[] Captions = { "RELOAD", "DARK HOUR", "MOONLIGHT", "SMTVV" };
         public static readonly string[] Descriptions = {
             "冷白数字 / 钴蓝背景 / 仪表字体",
             "电光青数字 / 深空背景 / 仪表字体",
-            "藏青数字 / 雾蓝实色 / 仪表字体"
+            "藏青数字 / 雾蓝实色 / 仪表字体",
+            "象牙白数字 / 玉青背景 / 图鉴字体"
         };
-        private static readonly int[] Inks = { 2, 3, 13 };
-        private static readonly int[] Surfaces = { 2, 7, 15 };
+        private static readonly int[] Inks = { 2, 3, 13, 14 };
+        private static readonly int[] Surfaces = { 2, 7, 15, ClockLooks.SmtvvSurface };
+        private static readonly int[] Fonts = { 4, 4, 4, 8 };
 
         public static int Match(ClockSettings settings)
         {
             for (int i = 0; i < Names.Length; i++)
                 if (settings.ThemeMode == Inks[i] && settings.SurfaceTone == Surfaces[i]
-                    && settings.FontMode == 4) return i;
+                    && settings.FontMode == Fonts[i]) return i;
             return -1;
         }
 
@@ -33,7 +35,7 @@ namespace FloatingClock
             if (Match(settings) == index) return false;
             settings.ThemeMode = Inks[index];
             settings.SurfaceTone = Surfaces[index];
-            settings.FontMode = 4;
+            settings.FontMode = Fonts[index];
             return true;
         }
 

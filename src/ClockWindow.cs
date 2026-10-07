@@ -34,6 +34,7 @@ namespace FloatingClock
         private readonly Border rightDivider;
         private readonly Border outline;
         private readonly ReloadClockChrome reloadChrome;
+        private readonly SmtvvClockChrome smtvvChrome;
         private readonly Viewbox scaler;
         private readonly TextBlock timeText;
         private readonly Viewbox timeScaler;
@@ -216,6 +217,8 @@ namespace FloatingClock
             designCanvas.Children.Add(outline);
             reloadChrome = new ReloadClockChrome();
             designCanvas.Children.Add(reloadChrome);
+            smtvvChrome = new SmtvvClockChrome();
+            designCanvas.Children.Add(smtvvChrome);
 
             scaler = new Viewbox
             {
@@ -722,7 +725,6 @@ namespace FloatingClock
             designCanvas.Width = designWidth;
             terminalSurface.Width = designWidth;
             outline.Width = designWidth;
-            designCanvas.Clip = ReloadClockChrome.Silhouette(designWidth, ClockLayout.DesignHeight);
             RefreshChrome();
 
             double scale = ClockLayout.ScaleFactor(settings.ScaleMode);
@@ -754,6 +756,19 @@ namespace FloatingClock
         private void RefreshChrome()
         {
             if (reloadChrome == null || palette == null) return;
+            bool smtvv = palette.IsSmtvv;
+            double radius = smtvv ? SmtvvClockChrome.Radius : 0;
+            terminalSurface.CornerRadius = new CornerRadius(radius);
+            outline.CornerRadius = new CornerRadius(radius);
+            designCanvas.Clip = smtvv
+                ? (Geometry)new RectangleGeometry(new Rect(0, 0, designCanvas.Width, ClockLayout.DesignHeight), radius, radius)
+                : ReloadClockChrome.Silhouette(designCanvas.Width, ClockLayout.DesignHeight);
+            leftDivider.RenderTransform = rightDivider.RenderTransform = smtvv
+                ? Transform.Identity : new SkewTransform(-12, 0);
+            reloadChrome.Visibility = smtvv ? Visibility.Collapsed : Visibility.Visible;
+            smtvvChrome.Visibility = smtvv ? Visibility.Visible : Visibility.Collapsed;
+            smtvvChrome.Configure(settings.ShowDate);
+            AutomationProperties.SetName(terminalSurface, smtvv ? "SMTVV clock" : "Reload clock");
             int preset = ClockThemePresets.Match(settings);
             reloadChrome.Configure(palette, settings.ShowDate,
                 preset >= 0 ? ClockThemePresets.Captions[preset] : "CUSTOM");

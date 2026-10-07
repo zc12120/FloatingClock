@@ -147,6 +147,9 @@ if (Test-Path $fontRoot) {
     Get-ChildItem -Path $fontRoot -Filter '*.ttf' | ForEach-Object {
         Copy-Item -Path $_.FullName -Destination $artifactRoot -Force
     }
+    Get-ChildItem -Path $fontRoot -Filter '*-OFL.txt' | ForEach-Object {
+        Copy-Item -Path $_.FullName -Destination $artifactRoot -Force
+    }
 }
 
 $testProcess = Start-Process -FilePath $outputPath -ArgumentList '--self-test' -Wait -PassThru
@@ -179,6 +182,9 @@ if ($Install) {
     Copy-Item -Path $outputPath -Destination $installPath -Force
     if (Test-Path $fontRoot) {
         Get-ChildItem -Path $fontRoot -Filter '*.ttf' | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination $installRoot -Force
+        }
+        Get-ChildItem -Path $fontRoot -Filter '*-OFL.txt' | ForEach-Object {
             Copy-Item -Path $_.FullName -Destination $installRoot -Force
         }
     }

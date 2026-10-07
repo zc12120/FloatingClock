@@ -5,6 +5,7 @@ obj/
 artifacts/*.tmp
 artifacts/*.bak
 artifacts/*.ttf
+artifacts/*-OFL.txt
 src/*.user
 artifacts/self-test.log
 artifacts/*.pdb
@@ -12,3 +13,4 @@ artifacts/*.exe.config
 artifacts/fonts/
 artifacts/install-test.log
 artifacts/preview/
+/debug-*.png

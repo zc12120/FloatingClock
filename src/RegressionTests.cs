@@ -32,6 +32,7 @@ namespace FloatingClock
                 Check(report, "Startup preference persistence and failure", StartupPreference);
                 Check(report, "Legacy position migration and monitor gaps", Geometry);
                 Check(report, "Shared menu actions, selection and disabled states", MenuState);
+                Check(report, "SMTVV theme persistence, opacity and appearance transitions", SmtvvAppearance);
                 Check(report, "Missing settings members and strict XML validation", SettingsRegressionTests.DefaultsAndValidation);
                 Check(report, "Atomic storage, unchanged saves and read-only recovery", SettingsRegressionTests.AtomicStorageAndRecovery);
                 Check(report, "Extreme coordinates and startup rollback", SettingsRegressionTests.CoordinatesAndStartupRollback);
@@ -399,9 +400,100 @@ namespace FloatingClock
                 }
                 ((Forms.ToolStripMenuItem)menu.Items.Find("font.1", true)[0]).PerformClick();
                 Assert(theme.ShortcutKeyDisplayString == "自定义"
-                    && !((Forms.ToolStripMenuItem)menu.Items.Find("theme.2", true)[0]).Checked,
+                    && !((Forms.ToolStripMenuItem)menu.Items.Find("theme." + (ClockThemePresets.Names.Length - 1), true)[0]).Checked,
                     "Customizing a preset left a misleading selection");
             }
+        }
+
+        private static void SmtvvAppearance()
+        {
+            ClockSettings settings = ClockSettings.CreateDefault();
+            settings.Left = 120;
+            settings.Top = 160;
+            settings.ShowDate = false;
+            settings.ShowSeconds = true;
+            settings.Use24Hour = false;
+            settings.AlwaysOnTop = false;
+            settings.Locked = true;
+            settings.ClickThrough = true;
+            settings.ScaleMode = 0;
+            settings.SurfaceOpacity = OpacityPresets.Faint;
+            settings.DockAnchor = 0;
+            settings.StartWithWindows = false;
+            string root = Path.Combine(Path.GetTempPath(), "FloatingClock-smtvv-test-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                using (WindowFixture fixture = new WindowFixture(settings))
+                {
+                    ClockWindow window = fixture.Window;
+                    Forms.ContextMenuStrip menu = window.SettingsMenu;
+                    Forms.ToolStripMenuItem theme = (Forms.ToolStripMenuItem)menu.Items.Find("theme", true)[0];
+                    System.Drawing.Color originalMenu = menu.BackColor;
+                    Grid canvas = (Grid)Field(window, "designCanvas");
+                    Border surface = (Border)Field(window, "terminalSurface");
+                    FrameworkElement reload = (FrameworkElement)Field(window, "reloadChrome");
+                    FrameworkElement smtvv = (FrameworkElement)Field(window, "smtvvChrome");
+
+                    window.SetThemePreset(3);
+                    AssertSmtvvPreferences(settings);
+                    Assert(ClockThemePresets.Match(settings) == 3 && ((ClockPalette)Field(window, "palette")).IsSmtvv,
+                        "SMTVV preset did not resolve its appearance");
+                    Assert(smtvv.Visibility == Visibility.Visible && reload.Visibility == Visibility.Collapsed
+                        && canvas.Clip is RectangleGeometry && surface.CornerRadius.TopLeft > 0,
+                        "SMTVV did not replace Reload chrome and clipping");
+                    Assert(menu.BackColor != originalMenu && theme.DropDown.BackColor == menu.BackColor
+                        && menu.Items.Find("opacity", true)[0].Enabled
+                        && ((Forms.ToolStripMenuItem)menu.Items.Find("surface." + ClockLooks.SmtvvSurface, true)[0]).ShortcutKeyDisplayString == "透明",
+                        "SMTVV menu colors or transparent-surface controls are stale");
+
+                    string path = Path.Combine(root, "settings.xml");
+                    SettingsStore.SaveTo(path, settings);
+                    SettingsLoadResult loaded = SettingsStore.LoadFrom(path);
+                    Assert(loaded.CanSave && ClockThemePresets.Match(loaded.Settings) == 3,
+                        "SMTVV theme was lost during settings normalization or persistence");
+                    AssertSmtvvPreferences(loaded.Settings);
+
+                    byte previousAlpha = 0;
+                    foreach (double opacity in new[] { OpacityPresets.Faint, OpacityPresets.Soft, OpacityPresets.Opaque })
+                    {
+                        window.SetSurfaceOpacity(opacity);
+                        LinearGradientBrush gradient = surface.Background as LinearGradientBrush;
+                        Assert(gradient != null && gradient.GradientStops.Count >= 2,
+                            "SMTVV transparent background lost its gradient");
+                        byte alpha = gradient.GradientStops[0].Color.A;
+                        Assert(alpha > previousAlpha && alpha < 255, "SMTVV background concentration lost per-pixel transparency");
+                        foreach (GradientStop stop in gradient.GradientStops)
+                            Assert(stop.Color.A == alpha, "SMTVV gradient does not consistently apply background concentration");
+                        Assert(((SolidColorBrush)((TextBlock)Field(window, "timeText")).Foreground).Color.A == 255,
+                            "Changing SMTVV concentration faded the clock digits");
+                        previousAlpha = alpha;
+                    }
+
+                    window.SetFontMode(1);
+                    Assert(theme.ShortcutKeyDisplayString == "自定义"
+                        && !((Forms.ToolStripMenuItem)menu.Items.Find("theme.3", true)[0]).Checked
+                        && smtvv.Visibility == Visibility.Visible && canvas.Clip is RectangleGeometry
+                        && menu.BackColor != originalMenu,
+                        "Customizing SMTVV's font lost its surface styling or retained a preset check");
+                    window.SetThemePreset(0);
+                    Assert(reload.Visibility == Visibility.Visible && smtvv.Visibility == Visibility.Collapsed
+                        && !(canvas.Clip is RectangleGeometry) && surface.CornerRadius.TopLeft == 0
+                        && menu.BackColor == originalMenu && theme.DropDown.BackColor == originalMenu,
+                        "Switching back to Reload retained SMTVV clipping, chrome or menu colors");
+                }
+            }
+            finally { Directory.Delete(root, true); }
+        }
+
+        private static void AssertSmtvvPreferences(ClockSettings settings)
+        {
+            Assert(settings.Version == ClockSettings.CurrentVersion && settings.PositionInPixels
+                && settings.Left == 120 && settings.Top == 160 && settings.DockAnchor == 0
+                && !settings.ShowDate && settings.ShowSeconds && !settings.Use24Hour
+                && !settings.AlwaysOnTop && settings.Locked && settings.ClickThrough && !settings.StartWithWindows
+                && settings.ScaleMode == 0 && settings.SurfaceOpacity == OpacityPresets.Faint,
+                "Applying or saving SMTVV changed existing position, format or interaction preferences");
         }
 
         private static void NonTopmostRestore()
